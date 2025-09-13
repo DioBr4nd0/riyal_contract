@@ -12,11 +12,21 @@ async function testCompleteRiyalContractEndToEnd() {
   console.log("🎯 Testing ALL 6 Modules + Security Features");
   console.log("============================================");
 
-  // Configure the client to use the local cluster
-  anchor.setProvider(anchor.AnchorProvider.env());
-  const program = anchor.workspace.riyalContract;
-  const provider = anchor.getProvider();
-  const connection = provider.connection;
+  // Configure the client to use the local cluster with hardcoded settings
+  const connection = new anchor.web3.Connection("http://127.0.0.1:8899", "confirmed");
+  
+  // Create a test wallet
+  const testWallet = Keypair.generate();
+  const wallet = new anchor.Wallet(testWallet);
+  
+  // Airdrop SOL to the test wallet
+  const airdropTx = await connection.requestAirdrop(testWallet.publicKey, 10 * anchor.web3.LAMPORTS_PER_SOL);
+  await connection.confirmTransaction(airdropTx);
+  
+  const provider = new anchor.AnchorProvider(connection, wallet, {});
+  anchor.setProvider(provider);
+  
+  const program = anchor.workspace.riyal_contract;
 
   // Generate all test accounts
   const admin = Keypair.generate();
@@ -74,7 +84,13 @@ async function testCompleteRiyalContractEndToEnd() {
     // Initialize the contract
     console.log("\n1️⃣  Initialize contract with admin...");
     const initTx = await program.methods
-      .initialize(admin.publicKey)
+      .initialize(
+        admin.publicKey,
+        admin.publicKey, // upgrade authority
+        new anchor.BN(3600), // claim period (1 hour)
+        true, // time lock enabled
+        true  // upgradeable
+      )
       .accounts({
         tokenState: tokenStatePDA,
         payer: admin.publicKey,
