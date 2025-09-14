@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Mint, Token, TokenAccount, MintTo, Burn, Transfer, FreezeAccount, ThawAccount};
 use anchor_lang::solana_program::{
-    sysvar::instructions::{self, load_instruction_at_checked},
+    sysvar::instructions::{self},
     sysvar::clock::Clock,
     account_info::AccountInfo,
 };

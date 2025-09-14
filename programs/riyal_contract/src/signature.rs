@@ -20,48 +20,67 @@ pub fn verify_ed25519_signatures_in_transaction(
     let mut user_verified = false;
     let mut admin_verified = false;
     
-    // Check all previous instructions in the transaction for Ed25519 verify instructions
+    // Helper to safely read little-endian integers
+    fn read_u8(data: &[u8], offset: usize) -> Option<u8> {
+        data.get(offset).copied()
+    }
+    fn read_u16_le(data: &[u8], offset: usize) -> Option<u16> {
+        let bytes = data.get(offset..offset + 2)?;
+        Some(u16::from_le_bytes([bytes[0], bytes[1]]))
+    }
+    
+    // Parse a single-sig Ed25519 instruction created by web3.js createInstructionWithPublicKey
+    // Layout (LE):
+    //   u8  numSignatures
+    //   u8  padding
+    //   u16 signatureOffset
+    //   u16 signatureInstructionIndex
+    //   u16 publicKeyOffset
+    //   u16 publicKeyInstructionIndex
+    //   u16 messageDataOffset
+    //   u16 messageDataSize
+    //   u16 messageInstructionIndex
+    // Followed by: publicKey (32) | signature (64) | message (msg_len)
+    fn parse_ed25519_single(data: &[u8]) -> Option<([u8; 32], [u8; 64], &[u8])> {
+        // Require at least 16-byte header
+        if data.len() < 16 { return None; }
+        let num_sigs = read_u8(data, 0)?;
+        if num_sigs != 1 { return None; }
+        let _padding = read_u8(data, 1)?;
+        let sig_off = read_u16_le(data, 2)? as usize;
+        let _sig_ix = read_u16_le(data, 4)?;
+        let pk_off = read_u16_le(data, 6)? as usize;
+        let _pk_ix = read_u16_le(data, 8)?;
+        let msg_off = read_u16_le(data, 10)? as usize;
+        let msg_size = read_u16_le(data, 12)? as usize;
+        let _msg_ix = read_u16_le(data, 14)?;
+        
+        // Bounds checks
+        if pk_off.checked_add(32).filter(|&end| end <= data.len()).is_none() { return None; }
+        if sig_off.checked_add(64).filter(|&end| end <= data.len()).is_none() { return None; }
+        if msg_off.checked_add(msg_size).filter(|&end| end <= data.len()).is_none() { return None; }
+        
+        let mut pk = [0u8; 32];
+        pk.copy_from_slice(&data[pk_off..pk_off + 32]);
+        let mut sig = [0u8; 64];
+        sig.copy_from_slice(&data[sig_off..sig_off + 64]);
+        let msg = &data[msg_off..msg_off + msg_size];
+        Some((pk, sig, msg))
+    }
+    
+    // Check all previous instructions for Ed25519 verifies and match against expected
     for i in 0..current_index {
         if let Ok(instruction) = load_instruction_at_checked(i.into(), instructions_sysvar) {
-            // Check if this is an Ed25519 verify instruction
             if instruction.program_id == ed25519_program::ID {
-                // The fact that the instruction succeeded means the signature was valid
-                // Now we need to check if it matches our expected signatures
-                
-                if instruction.data.len() >= 112 {
-                    // Simple approach: Check if the instruction data contains our expected data
-                    let instruction_contains_user_sig = instruction.data
-                        .windows(64)
-                        .any(|window| window == user_signature);
-                    
-                    let instruction_contains_admin_sig = instruction.data
-                        .windows(64)
-                        .any(|window| window == admin_signature);
-                    
-                    let instruction_contains_user_pubkey = instruction.data
-                        .windows(32)
-                        .any(|window| window == user_pubkey.as_ref());
-                    
-                    let instruction_contains_admin_pubkey = instruction.data
-                        .windows(32)
-                        .any(|window| window == admin_pubkey.as_ref());
-                    
-                    let instruction_contains_message = instruction.data
-                        .windows(message_bytes.len())
-                        .any(|window| window == message_bytes);
-                    
-                    // If instruction contains user signature, pubkey, and message, it verified the user
-                    if instruction_contains_user_sig && 
-                       instruction_contains_user_pubkey && 
-                       instruction_contains_message {
-                        user_verified = true;
-                    }
-                    
-                    // If instruction contains admin signature, pubkey, and message, it verified the admin
-                    if instruction_contains_admin_sig && 
-                       instruction_contains_admin_pubkey && 
-                       instruction_contains_message {
-                        admin_verified = true;
+                if let Some((pk, sig, msg)) = parse_ed25519_single(&instruction.data) {
+                    // Require exact message match
+                    if msg == message_bytes {
+                        if !user_verified && pk.as_ref() == user_pubkey.as_ref() && sig.as_ref() == user_signature {
+                            user_verified = true;
+                        }
+                        if !admin_verified && pk.as_ref() == admin_pubkey.as_ref() && sig.as_ref() == admin_signature {
+                            admin_verified = true;
+                        }
                     }
                 }
             }
