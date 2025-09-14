@@ -130,4 +130,10 @@ pub enum RiyalError {
     
     #[msg("Transfers cannot be disabled once permanently enabled")]
     TransfersCannotBeDisabled,
+    
+    #[msg("Unauthorized destination - user can only claim to their own token account")]
+    UnauthorizedDestination,
+    
+    #[msg("Claim has expired - valid_until timestamp has passed")]
+    ClaimExpired,
 }

@@ -1,7 +1,6 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Mint, Token, TokenAccount, MintTo, Burn, Transfer, FreezeAccount, ThawAccount};
 use anchor_lang::solana_program::{
-    ed25519_program,
     sysvar::instructions::{self, load_instruction_at_checked},
     sysvar::clock::Clock,
     account_info::AccountInfo,
@@ -11,7 +10,7 @@ use errors::*;
 pub mod signature;
 use signature::verify_ed25519_signatures_in_transaction;
 
-declare_id!("3DAyy3hk9x4LPKzJMLsGeMj7pFWyavf9624LTMhrhDbH");
+declare_id!("A8S99EvMvPXP88Whc7d9N482NJm7EDWimeVLrf5i14EW");
 
 #[program]
 pub mod riyal_contract {
@@ -28,9 +27,9 @@ pub mod riyal_contract {
     ) -> Result<()> {
         let token_state = &mut ctx.accounts.token_state;
         
-        // Validate claim period (must be reasonable)
+        // Validate claim period (must be reasonable) - allowing shorter periods for testing
         require!(
-            claim_period_seconds >= 3600, // Minimum 1 hour
+            claim_period_seconds >= 30, // Minimum 30 seconds (for testing)
             RiyalError::InvalidClaimPeriod
         );
         
@@ -81,6 +80,12 @@ pub mod riyal_contract {
         require!(
             token_state.is_initialized,
             RiyalError::ContractNotInitialized
+        );
+
+        // CRITICAL: Verify token mint hasn't been created already
+        require!(
+            token_state.token_mint == Pubkey::default(),
+            RiyalError::TokenMintAlreadyCreated
         );
 
         // Store token mint information
@@ -217,11 +222,12 @@ pub mod riyal_contract {
         Ok(())
     }
 
-    /// Claim tokens using signed message with nonce (user + admin signatures)
+    /// Claim tokens using domain-separated signed message with nonce, destination binding, and expiry
     pub fn claim_tokens(
         ctx: Context<ClaimTokens>,
         amount: u64,
         nonce: u64,
+        valid_until: i64,
         user_signature: [u8; 64],
         admin_signature: [u8; 64],
     ) -> Result<()> {
@@ -250,6 +256,12 @@ pub mod riyal_contract {
         require!(
             ctx.accounts.user_token_account.mint == token_state.token_mint,
             RiyalError::InvalidTokenAccount
+        );
+
+        // CRITICAL SECURITY: Verify destination binding - user can only claim to their own token account
+        require!(
+            ctx.accounts.user_token_account.owner == ctx.accounts.user.key(),
+            RiyalError::UnauthorizedDestination
         );
 
         // Verify amount is not zero
@@ -324,14 +336,26 @@ pub mod riyal_contract {
             );
         }
 
-        // Create the message to verify signatures
-        let message = format!(
-            "{{\"user\":\"{}\",\"amount\":{},\"nonce\":{},\"mint\":\"{}\"}}",
-            ctx.accounts.user.key(),
-            amount,
-            nonce,
-            token_state.token_mint
+        // CRITICAL SECURITY: Validate expiry timestamp
+        let current_timestamp = Clock::get()?.unix_timestamp;
+        require!(
+            current_timestamp <= valid_until,
+            RiyalError::ClaimExpired
         );
+        
+        // Create DOMAIN-SEPARATED MESSAGE with destination binding and expiry
+        // Format: "RIYAL_CLAIM_V1" | program_id | token_state_pda | mint | user | destination | amount | nonce | valid_until
+        
+        let mut message_bytes = Vec::new();
+        message_bytes.extend_from_slice(b"RIYAL_CLAIM_V1");
+        message_bytes.extend_from_slice(&crate::ID.to_bytes());
+        message_bytes.extend_from_slice(&ctx.accounts.token_state.key().to_bytes());
+        message_bytes.extend_from_slice(&token_state.token_mint.to_bytes());
+        message_bytes.extend_from_slice(&ctx.accounts.user.key().to_bytes());
+        message_bytes.extend_from_slice(&ctx.accounts.user_token_account.key().to_bytes()); // destination binding
+        message_bytes.extend_from_slice(&amount.to_le_bytes()); // amount as LE bytes
+        message_bytes.extend_from_slice(&nonce.to_le_bytes()); // nonce as LE bytes
+        message_bytes.extend_from_slice(&valid_until.to_le_bytes()); // expiry as LE bytes
 
         // CRITICAL SECURITY: Proper Ed25519 signature verification using instruction introspection
         // This implements REAL cryptographic signature verification
@@ -361,11 +385,11 @@ pub mod riyal_contract {
             RiyalError::InvalidAdminSignature
         );
 
-        // ENHANCED SECURITY: Verify Ed25519 signatures using proper Solana method
+        // ENHANCED SECURITY: Verify Ed25519 signatures using proper Solana method with domain separation
         // This requires Ed25519 verify instructions to be included in the transaction
         verify_ed25519_signatures_in_transaction(
             &ctx.accounts.instructions,
-            &message,
+            &message_bytes,
             &user_signature,
             &admin_signature,
             &ctx.accounts.user.key(),

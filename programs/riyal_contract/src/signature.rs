@@ -5,17 +5,16 @@ use anchor_lang::solana_program::{
 };
 use crate::errors::*;
 
-/// Verify Ed25519 signatures using proper Solana method
+/// Verify Ed25519 signatures using proper Solana method with domain-separated binary messages
 /// This requires Ed25519 verify instructions to be included BEFORE the claim instruction
 pub fn verify_ed25519_signatures_in_transaction(
     instructions_sysvar: &UncheckedAccount,
-    message: &str,
+    message_bytes: &[u8],
     user_signature: &[u8; 64],
     admin_signature: &[u8; 64],
     user_pubkey: &Pubkey,
     admin_pubkey: &Pubkey,
 ) -> Result<()> {
-    let message_bytes = message.as_bytes();
     let current_index = instructions::load_current_index_checked(instructions_sysvar)?;
     
     let mut user_verified = false;
