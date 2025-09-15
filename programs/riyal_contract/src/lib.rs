@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token_2022::Token2022;
-use anchor_spl::token_interface::{Mint, TokenAccount};
+use anchor_spl::token_interface::{Mint, TokenAccount, freeze_account, thaw_account, FreezeAccount, ThawAccount};
 use anchor_lang::solana_program::{
     sysvar::instructions::{self},
     sysvar::clock::Clock,
@@ -293,14 +293,141 @@ pub mod riyal_contract {
         // Mint tokens
         anchor_spl::token_interface::mint_to(cpi_ctx, amount)?;
 
-        // Freeze logic removed - tokens are always transferable after minting
+        // AUTO-FREEZE: Immediately freeze the token account after minting
+        let freeze_seeds = &[
+            b"token_state".as_ref(),
+            &[ctx.bumps.token_state],
+        ];
+        let freeze_signer_seeds = &[&freeze_seeds[..]];
+
+        let freeze_cpi_accounts = FreezeAccount {
+            account: ctx.accounts.user_token_account.to_account_info(),
+            mint: ctx.accounts.mint.to_account_info(),
+            authority: ctx.accounts.token_state.to_account_info(),
+        };
+        let freeze_cpi_program = ctx.accounts.token_program.to_account_info();
+        let freeze_cpi_ctx = CpiContext::new_with_signer(freeze_cpi_program, freeze_cpi_accounts, freeze_signer_seeds);
+
+        // Freeze the account immediately after minting
+        freeze_account(freeze_cpi_ctx)?;
 
         msg!(
-            "Minted {} tokens to user account: {} by admin: {} (Frozen: {})",
+            "Minted {} tokens to user account: {} by admin: {} - ACCOUNT IMMEDIATELY FROZEN",
             amount,
             ctx.accounts.user_token_account.key(),
-            ctx.accounts.admin.key(),
-            !token_state.transfers_enabled
+            ctx.accounts.admin.key()
+        );
+
+        Ok(())
+    }
+
+    /// Freeze a user's token account (admin only) - prevents all transfers
+    pub fn freeze_token_account(ctx: Context<FreezeTokenAccount>) -> Result<()> {
+        let token_state = &ctx.accounts.token_state;
+        
+        // Verify admin is calling this function
+        require!(
+            ctx.accounts.admin.key() == token_state.admin,
+            RiyalError::UnauthorizedAdmin
+        );
+
+        // Verify contract is initialized
+        require!(
+            token_state.is_initialized,
+            RiyalError::ContractNotInitialized
+        );
+
+        // Verify the mint matches
+        require!(
+            ctx.accounts.mint.key() == token_state.token_mint,
+            RiyalError::InvalidTokenMint
+        );
+
+        // Verify the token account belongs to this mint
+        require!(
+            ctx.accounts.token_account.mint == token_state.token_mint,
+            RiyalError::InvalidTokenAccount
+        );
+
+        // Create signer seeds for PDA authority
+        let seeds = &[
+            b"token_state".as_ref(),
+            &[ctx.bumps.token_state],
+        ];
+        let signer_seeds = &[&seeds[..]];
+
+        // Create CPI context for freezing
+        let cpi_accounts = FreezeAccount {
+            account: ctx.accounts.token_account.to_account_info(),
+            mint: ctx.accounts.mint.to_account_info(),
+            authority: ctx.accounts.token_state.to_account_info(),
+        };
+        let cpi_program = ctx.accounts.token_program.to_account_info();
+        let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
+
+        // Freeze the account
+        freeze_account(cpi_ctx)?;
+
+        msg!(
+            "Token account {} FROZEN by admin: {} - NO TRANSFERS ALLOWED",
+            ctx.accounts.token_account.key(),
+            ctx.accounts.admin.key()
+        );
+
+        Ok(())
+    }
+
+    /// Unfreeze a user's token account (admin only) - allows transfers again
+    pub fn unfreeze_token_account(ctx: Context<UnfreezeTokenAccount>) -> Result<()> {
+        let token_state = &ctx.accounts.token_state;
+        
+        // Verify admin is calling this function
+        require!(
+            ctx.accounts.admin.key() == token_state.admin,
+            RiyalError::UnauthorizedAdmin
+        );
+
+        // Verify contract is initialized
+        require!(
+            token_state.is_initialized,
+            RiyalError::ContractNotInitialized
+        );
+
+        // Verify the mint matches
+        require!(
+            ctx.accounts.mint.key() == token_state.token_mint,
+            RiyalError::InvalidTokenMint
+        );
+
+        // Verify the token account belongs to this mint
+        require!(
+            ctx.accounts.token_account.mint == token_state.token_mint,
+            RiyalError::InvalidTokenAccount
+        );
+
+        // Create signer seeds for PDA authority
+        let seeds = &[
+            b"token_state".as_ref(),
+            &[ctx.bumps.token_state],
+        ];
+        let signer_seeds = &[&seeds[..]];
+
+        // Create CPI context for thawing (unfreezing)
+        let cpi_accounts = ThawAccount {
+            account: ctx.accounts.token_account.to_account_info(),
+            mint: ctx.accounts.mint.to_account_info(),
+            authority: ctx.accounts.token_state.to_account_info(),
+        };
+        let cpi_program = ctx.accounts.token_program.to_account_info();
+        let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
+
+        // Unfreeze the account
+        thaw_account(cpi_ctx)?;
+
+        msg!(
+            "Token account {} UNFROZEN by admin: {} - TRANSFERS NOW ALLOWED",
+            ctx.accounts.token_account.key(),
+            ctx.accounts.admin.key()
         );
 
         Ok(())
@@ -1293,6 +1420,66 @@ pub struct MintTokens<'info> {
         constraint = user_token_account.mint == token_state.token_mint @ RiyalError::InvalidTokenAccount
     )]
     pub user_token_account: InterfaceAccount<'info, TokenAccount>,
+    
+    #[account(
+        mut,
+        constraint = admin.key() == token_state.admin @ RiyalError::UnauthorizedAdmin
+    )]
+    pub admin: Signer<'info>,
+    
+    pub token_program: Program<'info, Token2022>,
+}
+
+#[derive(Accounts)]
+pub struct FreezeTokenAccount<'info> {
+    #[account(
+        mut,
+        seeds = [b"token_state"],
+        bump
+    )]
+    pub token_state: Account<'info, TokenState>,
+    
+    #[account(
+        mut,
+        constraint = mint.key() == token_state.token_mint @ RiyalError::InvalidTokenMint
+    )]
+    pub mint: InterfaceAccount<'info, Mint>,
+    
+    #[account(
+        mut,
+        constraint = token_account.mint == token_state.token_mint @ RiyalError::InvalidTokenAccount
+    )]
+    pub token_account: InterfaceAccount<'info, TokenAccount>,
+    
+    #[account(
+        mut,
+        constraint = admin.key() == token_state.admin @ RiyalError::UnauthorizedAdmin
+    )]
+    pub admin: Signer<'info>,
+    
+    pub token_program: Program<'info, Token2022>,
+}
+
+#[derive(Accounts)]
+pub struct UnfreezeTokenAccount<'info> {
+    #[account(
+        mut,
+        seeds = [b"token_state"],
+        bump
+    )]
+    pub token_state: Account<'info, TokenState>,
+    
+    #[account(
+        mut,
+        constraint = mint.key() == token_state.token_mint @ RiyalError::InvalidTokenMint
+    )]
+    pub mint: InterfaceAccount<'info, Mint>,
+    
+    #[account(
+        mut,
+        constraint = token_account.mint == token_state.token_mint @ RiyalError::InvalidTokenAccount
+    )]
+    pub token_account: InterfaceAccount<'info, TokenAccount>,
     
     #[account(
         mut,
