@@ -245,6 +245,11 @@ pub mod riyal_contract {
             RiyalError::InvalidTokenAccount
         );
 
+        // CRITICAL: This check should come FIRST
+        require!(
+        payload.user_address == ctx.accounts.user.key(),
+        RiyalError::UnauthorizedDestination
+        );
         // CRITICAL SECURITY: Verify destination binding - user can only claim to their own token account
         require!(
             ctx.accounts.user_token_account.owner == ctx.accounts.user.key(),
@@ -271,18 +276,6 @@ pub mod riyal_contract {
         require!(
             payload.nonce == user_data.nonce,
             RiyalError::InvalidNonce
-        );
-
-        // CRITICAL SECURITY CHECK 3: Ensure nonce is not decreasing (strict ordering)
-        require!(
-            payload.nonce >= user_data.nonce,
-            RiyalError::NonceNotIncreasing
-        );
-
-        // CRITICAL SECURITY CHECK 4: Prevent nonce from being too far in the future (max 1 ahead)
-        require!(
-            payload.nonce <= user_data.nonce.saturating_add(1),
-            RiyalError::NonceTooHigh
         );
 
         // CRITICAL SECURITY CHECK 5: TIME-LOCK VALIDATION - enforce claim periods
