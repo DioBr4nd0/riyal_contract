@@ -1235,33 +1235,33 @@ pub struct ClaimTokens<'info> {
         bump
     )]
     pub token_state: Account<'info, TokenState>,
-    
+
     #[account(
         mut,
         seeds = [b"user_data", user.key().as_ref()],
         bump
     )]
     pub user_data: Account<'info, UserData>,
-    
+
     #[account(
         mut,
         constraint = mint.key() == token_state.token_mint @ RiyalError::InvalidTokenMint
     )]
     pub mint: InterfaceAccount<'info, Mint>,
-    
+
     #[account(
         mut,
         constraint = user_token_account.mint == token_state.token_mint @ RiyalError::InvalidTokenAccount
     )]
     pub user_token_account: InterfaceAccount<'info, TokenAccount>,
-    
+
     /// CHECK: User pubkey is verified through signature verification
     pub user: UncheckedAccount<'info>,
-    
+
     /// CHECK: Instructions sysvar for Ed25519 signature verification
     #[account(address = instructions::ID)]
     pub instructions: UncheckedAccount<'info>,
-    
+
     pub token_program: Program<'info, Token2022>,
 }
 

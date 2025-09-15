@@ -50,10 +50,49 @@ async function getUserNonce(program, userPubkey) {
 }
 
 async function createEd25519Instruction(message, signature, pubkey) {
-  return anchor.web3.Ed25519Program.createInstructionWithPublicKey({
-    publicKey: pubkey.toBytes(),
-    message: message,
-    signature: signature
+  const ed25519ProgramId = new anchor.web3.PublicKey("Ed25519SigVerify111111111111111111111111111");
+
+  // Manual Ed25519 instruction creation (working method)
+  const numSignatures = 1;
+  const padding = 0;
+  const signatureOffset = 16; // After the header
+  const signatureInstructionIndex = 0;
+  const publicKeyOffset = signatureOffset + 64; // After signature
+  const publicKeyInstructionIndex = 0;
+  const messageDataOffset = publicKeyOffset + 32; // After public key
+  const messageDataSize = message.length;
+  const messageInstructionIndex = 0;
+
+  // Create instruction data
+  const instructionData = Buffer.alloc(16 + 64 + 32 + message.length);
+  let offset = 0;
+
+  // Header (16 bytes)
+  instructionData.writeUInt8(numSignatures, offset); offset += 1;
+  instructionData.writeUInt8(padding, offset); offset += 1;
+  instructionData.writeUInt16LE(signatureOffset, offset); offset += 2;
+  instructionData.writeUInt16LE(signatureInstructionIndex, offset); offset += 2;
+  instructionData.writeUInt16LE(publicKeyOffset, offset); offset += 2;
+  instructionData.writeUInt16LE(publicKeyInstructionIndex, offset); offset += 2;
+  instructionData.writeUInt16LE(messageDataOffset, offset); offset += 2;
+  instructionData.writeUInt16LE(messageDataSize, offset); offset += 2;
+  instructionData.writeUInt16LE(messageInstructionIndex, offset); offset += 2;
+
+  // Signature (64 bytes)
+  Buffer.from(signature).copy(instructionData, offset);
+  offset += 64;
+
+  // Public key (32 bytes)
+  pubkey.toBuffer().copy(instructionData, offset);
+  offset += 32;
+
+  // Message
+  message.copy(instructionData, offset);
+
+  return new anchor.web3.TransactionInstruction({
+    keys: [],
+    programId: ed25519ProgramId,
+    data: instructionData,
   });
 }
 
@@ -458,6 +497,8 @@ async function getTokenBalance(connection, tokenAccount) {
     validUntil
   );
 
+  console.log(`📏 Message size: ${message.length} bytes`);
+
   // Sign the message with both user and admin keys
   const userSignature = signMessage(message, claimUser);
   const adminSignature = signMessage(message, admin);
@@ -474,10 +515,29 @@ async function getTokenBalance(connection, tokenAccount) {
     program.programId
   );
 
+  // Initialize user data PDA if it doesn't exist
+  try {
+    await program.account.userData.fetch(userDataPDA);
+    console.log("ℹ️  User data PDA already exists");
+  } catch (e) {
+    console.log("🔧 Creating user data PDA...");
+    await program.methods
+      .initializeUserData()
+      .accounts({
+        userData: userDataPDA,
+        user: claimUser.publicKey,
+        systemProgram: SystemProgram.programId
+      })
+      .signers([claimUser])
+      .rpc();
+    console.log("✅ User data PDA created");
+  }
+
   // Test 1: Valid signature claim (should succeed)
   console.log("\n✅ Testing valid signature claim...");
   try {
-    await program.methods
+    // Create the claim instruction
+    const claimIx = await program.methods
       .claimTokens(
         claimAmount,
         new BN(currentNonce),
@@ -485,20 +545,52 @@ async function getTokenBalance(connection, tokenAccount) {
         userSignature,
         adminSignature
       )
-      .preInstructions([userEd25519Ix, adminEd25519Ix])
       .accounts({
         tokenState: tokenStatePDA,
         userData: userDataPDA,
         mint: mint.publicKey,
         userTokenAccount: tokenAccounts.user1,
         user: claimUser.publicKey,
-        payer: admin.publicKey, // Use admin as payer for fees
         tokenProgram: TOKEN_2022_PROGRAM_ID,
-        systemProgram: SystemProgram.programId,
         instructions: SYSVAR_INSTRUCTIONS_PUBKEY
       })
-      .signers([admin, claimUser])
-      .rpc();
+      .instruction();
+
+    // Create versioned transaction (V0) with higher limits
+    const { blockhash } = await connection.getLatestBlockhash();
+
+    const versionedTx = new anchor.web3.VersionedTransaction(
+      new anchor.web3.TransactionMessage({
+        payerKey: admin.publicKey,
+        recentBlockhash: blockhash,
+        instructions: [userEd25519Ix, adminEd25519Ix, claimIx]
+      }).compileToV0Message()
+    );
+
+    // Check size
+    const serializedSize = versionedTx.serialize().length;
+    console.log(`📏 Versioned transaction size: ${serializedSize} bytes`);
+
+    // Sign and simulate first
+    versionedTx.sign([admin]);
+
+    console.log("🧪 Simulating transaction...");
+    const simulationResult = await connection.simulateTransaction(versionedTx, {
+      replaceRecentBlockhash: true,
+      sigVerify: false
+    });
+    if (simulationResult.value.err) {
+      console.log("❌ Simulation error:", JSON.stringify(simulationResult.value.err));
+      console.log("📋 Logs:", simulationResult.value.logs);
+      console.log("🔍 Simulation result:", JSON.stringify(simulationResult.value, null, 2));
+      throw new Error("Transaction simulation failed");
+    }
+
+    const signature = await connection.sendRawTransaction(versionedTx.serialize(), {
+      skipPreflight: false,
+      preflightCommitment: 'confirmed'
+    });
+    await connection.confirmTransaction(signature, 'confirmed');
 
     const balanceAfterClaim = await getTokenBalance(connection, tokenAccounts.user1);
     const claimedAmount = (balanceAfterClaim - balanceBeforeClaim) / Math.pow(10, 9);
@@ -541,16 +633,14 @@ async function getTokenBalance(connection, tokenAccount) {
         mint: mint.publicKey,
         userTokenAccount: tokenAccounts.user1,
         user: claimUser.publicKey,
-        payer: admin.publicKey,
         tokenProgram: TOKEN_2022_PROGRAM_ID,
-        systemProgram: SystemProgram.programId,
         instructions: SYSVAR_INSTRUCTIONS_PUBKEY
       })
       .instruction();
 
     replayTx.add(replayInstruction);
 
-    await provider.sendAndConfirm(replayTx, [admin, claimUser]);
+    await provider.sendAndConfirm(replayTx, [admin]);
 
     console.log("❌ CRITICAL: Replay attack succeeded! Nonce validation failed!");
   } catch (e) {
@@ -600,16 +690,14 @@ async function getTokenBalance(connection, tokenAccount) {
         mint: mint.publicKey,
         userTokenAccount: tokenAccounts.user1,
         user: claimUser.publicKey,
-        payer: admin.publicKey,
         tokenProgram: TOKEN_2022_PROGRAM_ID,
-        systemProgram: SystemProgram.programId,
         instructions: SYSVAR_INSTRUCTIONS_PUBKEY
       })
       .instruction();
 
     invalidTx.add(invalidInstruction);
 
-    await provider.sendAndConfirm(invalidTx, [admin, claimUser]);
+    await provider.sendAndConfirm(invalidTx, [admin]);
 
     console.log("❌ CRITICAL: Invalid signature accepted! Signature verification failed!");
   } catch (e) {
