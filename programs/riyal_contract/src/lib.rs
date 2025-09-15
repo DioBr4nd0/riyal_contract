@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Mint, Token, TokenAccount, MintTo, Burn, Transfer, FreezeAccount, ThawAccount};
+use anchor_spl::token::{self, Mint, Token, TokenAccount, MintTo, Burn, Transfer};
 use anchor_lang::solana_program::{
     sysvar::instructions::{self},
     sysvar::clock::Clock,
@@ -167,27 +167,7 @@ pub mod riyal_contract {
         // Mint tokens
         token::mint_to(cpi_ctx, amount)?;
 
-        // CRITICAL FEATURE: Freeze the token account if transfers are not enabled
-        // This ensures tokens are non-transferable until admin explicitly enables transfers
-        if !token_state.transfers_enabled {
-            let freeze_cpi_accounts = FreezeAccount {
-                account: ctx.accounts.user_token_account.to_account_info(),
-                mint: ctx.accounts.mint.to_account_info(),
-                authority: ctx.accounts.token_state.to_account_info(),
-            };
-            let freeze_cpi_ctx = CpiContext::new_with_signer(
-                ctx.accounts.token_program.to_account_info(), 
-                freeze_cpi_accounts, 
-                signer_seeds
-            );
-            
-            token::freeze_account(freeze_cpi_ctx)?;
-            
-            msg!(
-                "Token account FROZEN: {} - Transfers disabled until admin enables",
-                ctx.accounts.user_token_account.key()
-            );
-        }
+        // Freeze logic removed - tokens are always transferable after minting
 
         msg!(
             "Minted {} tokens to user account: {} by admin: {} (Frozen: {})",
@@ -403,24 +383,7 @@ pub mod riyal_contract {
         ];
         let signer_seeds = &[&seeds[..]];
 
-        // CRITICAL FEATURE: Unfreeze account before minting if it's frozen
-        // This allows claims to work even on previously frozen accounts
-        if !token_state.transfers_enabled {
-            // Only try to unfreeze if transfers are not enabled (account might be frozen)
-            let thaw_cpi_accounts = ThawAccount {
-                account: ctx.accounts.user_token_account.to_account_info(),
-                mint: ctx.accounts.mint.to_account_info(),
-                authority: ctx.accounts.token_state.to_account_info(),
-            };
-            let thaw_cpi_ctx = CpiContext::new_with_signer(
-                ctx.accounts.token_program.to_account_info(), 
-                thaw_cpi_accounts, 
-                signer_seeds
-            );
-            
-            // Try to unfreeze (ignore errors if account is not frozen)
-            let _ = token::thaw_account(thaw_cpi_ctx);
-        }
+        // Freeze/thaw logic removed for simplicity - tokens can always be claimed
 
         // Create CPI context for minting with PDA as authority
         let cpi_accounts = MintTo {
@@ -434,27 +397,7 @@ pub mod riyal_contract {
         // Mint tokens
         token::mint_to(cpi_ctx, amount)?;
 
-        // CRITICAL FEATURE: Freeze the token account if transfers are not enabled
-        // This ensures claimed tokens are non-transferable until admin explicitly enables transfers
-        if !token_state.transfers_enabled {
-            let freeze_cpi_accounts = FreezeAccount {
-                account: ctx.accounts.user_token_account.to_account_info(),
-                mint: ctx.accounts.mint.to_account_info(),
-                authority: ctx.accounts.token_state.to_account_info(),
-            };
-            let freeze_cpi_ctx = CpiContext::new_with_signer(
-                ctx.accounts.token_program.to_account_info(), 
-                freeze_cpi_accounts, 
-                signer_seeds
-            );
-            
-            token::freeze_account(freeze_cpi_ctx)?;
-            
-            msg!(
-                "Token account FROZEN after claim: {} - Transfers disabled until admin enables",
-                ctx.accounts.user_token_account.key()
-            );
-        }
+        // Freeze logic removed - tokens are always transferable after claiming
 
         // CRITICAL SECURITY UPDATE: Increment nonce and update security tracking
         let old_nonce = user_data.nonce;
@@ -668,26 +611,14 @@ pub mod riyal_contract {
         let clock = Clock::get()?;
         let current_timestamp = clock.unix_timestamp;
 
-        // Create PDA signer for unfreezing
+        // Create PDA signer for minting
         let seeds = &[
             b"token_state".as_ref(),
             &[ctx.bumps.token_state],
         ];
         let signer_seeds = &[&seeds[..]];
 
-        // Create CPI context for unfreezing the token account
-        let thaw_cpi_accounts = ThawAccount {
-            account: ctx.accounts.user_token_account.to_account_info(),
-            mint: ctx.accounts.mint.to_account_info(),
-            authority: ctx.accounts.token_state.to_account_info(),
-        };
-        let thaw_cpi_ctx = CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(), 
-            thaw_cpi_accounts, 
-            signer_seeds
-        );
-        
-        token::thaw_account(thaw_cpi_ctx)?;
+        // Freeze/thaw logic removed for simplicity - tokens can always be claimed
 
         msg!(
             "ACCOUNT UNFROZEN: User: {}, Account: {}, Timestamp: {} - Transfers now enabled",
