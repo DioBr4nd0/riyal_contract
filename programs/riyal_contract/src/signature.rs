@@ -5,19 +5,16 @@ use anchor_lang::solana_program::{
 };
 use crate::errors::*;
 
-/// Verify Ed25519 signatures using proper Solana method with domain-separated binary messages
-/// This requires Ed25519 verify instructions to be included BEFORE the claim instruction
-pub fn verify_ed25519_signatures_in_transaction(
+/// Verify admin Ed25519 signature only using proper Solana method with domain-separated binary messages
+/// This requires an Ed25519 verify instruction to be included BEFORE the claim instruction
+pub fn verify_admin_signature_only(
     instructions_sysvar: &UncheckedAccount,
     message_bytes: &[u8],
-    user_signature: &[u8; 64],
     admin_signature: &[u8; 64],
-    user_pubkey: &Pubkey,
     admin_pubkey: &Pubkey,
 ) -> Result<()> {
     let current_index = instructions::load_current_index_checked(instructions_sysvar)?;
     
-    let mut user_verified = false;
     let mut admin_verified = false;
     
     // Helper to safely read little-endian integers
@@ -75,9 +72,6 @@ pub fn verify_ed25519_signatures_in_transaction(
                 if let Some((pk, sig, msg)) = parse_ed25519_single(&instruction.data) {
                     // Require exact message match
                     if msg == message_bytes {
-                        if !user_verified && pk.as_ref() == user_pubkey.as_ref() && sig.as_ref() == user_signature {
-                            user_verified = true;
-                        }
                         if !admin_verified && pk.as_ref() == admin_pubkey.as_ref() && sig.as_ref() == admin_signature {
                             admin_verified = true;
                         }
@@ -87,19 +81,14 @@ pub fn verify_ed25519_signatures_in_transaction(
         }
     }
     
-    // Require both signatures to be verified by Ed25519 program
-    require!(
-        user_verified,
-        RiyalError::UserSignatureNotVerified
-    );
-    
+    // Require admin signature to be verified by Ed25519 program
     require!(
         admin_verified,
         RiyalError::AdminSignatureNotVerified
     );
     
     msg!(
-        "REAL ED25519 VERIFICATION SUCCESS: Both signatures cryptographically verified"
+        "REAL ED25519 VERIFICATION SUCCESS: Admin signature cryptographically verified"
     );
     
     Ok(())

@@ -136,4 +136,7 @@ pub enum RiyalError {
     
     #[msg("Claim has expired - valid_until timestamp has passed")]
     ClaimExpired,
+    
+    #[msg("Invalid claim payload - failed to deserialize")]
+    InvalidClaimPayload,
 }

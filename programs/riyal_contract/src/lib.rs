@@ -9,9 +9,18 @@ use anchor_lang::solana_program::{
 pub mod errors;
 use errors::*;
 pub mod signature;
-use signature::verify_ed25519_signatures_in_transaction;
+use signature::verify_admin_signature_only;
 
 declare_id!("A8S99EvMvPXP88Whc7d9N482NJm7EDWimeVLrf5i14EW");
+
+/// Claim payload structure that gets signed by admin
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct ClaimPayload {
+    pub user_address: Pubkey,
+    pub claim_amount: u64,
+    pub expiry_time: i64,
+    pub nonce: u64,
+}
 
 #[program]
 pub mod riyal_contract {
@@ -203,13 +212,10 @@ pub mod riyal_contract {
         Ok(())
     }
 
-    /// Claim tokens using domain-separated signed message with nonce, destination binding, and expiry
+    /// Claim tokens using admin-signed payload with user verification
     pub fn claim_tokens(
         ctx: Context<ClaimTokens>,
-        amount: u64,
-        nonce: u64,
-        valid_until: i64,
-        user_signature: [u8; 64],
+        payload: ClaimPayload,
         admin_signature: [u8; 64],
     ) -> Result<()> {
         let token_state = &ctx.accounts.token_state;
@@ -247,7 +253,7 @@ pub mod riyal_contract {
 
         // Verify amount is not zero
         require!(
-            amount > 0,
+            payload.claim_amount > 0,
             RiyalError::InvalidMintAmount
         );
 
@@ -263,19 +269,19 @@ pub mod riyal_contract {
 
         // CRITICAL SECURITY CHECK 2: Verify nonce matches user's current nonce (prevent replay attacks)
         require!(
-            nonce == user_data.nonce,
+            payload.nonce == user_data.nonce,
             RiyalError::InvalidNonce
         );
 
         // CRITICAL SECURITY CHECK 3: Ensure nonce is not decreasing (strict ordering)
         require!(
-            nonce >= user_data.nonce,
+            payload.nonce >= user_data.nonce,
             RiyalError::NonceNotIncreasing
         );
 
         // CRITICAL SECURITY CHECK 4: Prevent nonce from being too far in the future (max 1 ahead)
         require!(
-            nonce <= user_data.nonce.saturating_add(1),
+            payload.nonce <= user_data.nonce.saturating_add(1),
             RiyalError::NonceTooHigh
         );
 
@@ -312,68 +318,46 @@ pub mod riyal_contract {
         // CRITICAL SECURITY CHECK 6: Validate nonce progression
         if user_data.total_claims > 0 {
             require!(
-                nonce == user_data.nonce,
+                payload.nonce == user_data.nonce,
                 RiyalError::InvalidNonceSequence
             );
         }
 
         // CRITICAL SECURITY: Validate expiry timestamp
-        let current_timestamp = Clock::get()?.unix_timestamp;
         require!(
-            current_timestamp <= valid_until,
+            current_timestamp <= payload.expiry_time,
             RiyalError::ClaimExpired
         );
         
-        // Create DOMAIN-SEPARATED MESSAGE with destination binding and expiry
-        // Format: "RIYAL_CLAIM_V1" | program_id | token_state_pda | mint | user | destination | amount | nonce | valid_until
+        // Serialize the payload to create the message that was signed by admin
+        let payload_bytes = payload.try_to_vec().map_err(|_| RiyalError::InvalidClaimPayload)?;
         
+        // Create DOMAIN-SEPARATED MESSAGE with the payload
+        // Format: "RIYAL_CLAIM_V2" | program_id | payload_bytes
         let mut message_bytes = Vec::new();
-        message_bytes.extend_from_slice(b"RIYAL_CLAIM_V1");
+        message_bytes.extend_from_slice(b"RIYAL_CLAIM_V2");
         message_bytes.extend_from_slice(&crate::ID.to_bytes());
-        message_bytes.extend_from_slice(&ctx.accounts.token_state.key().to_bytes());
-        message_bytes.extend_from_slice(&token_state.token_mint.to_bytes());
-        message_bytes.extend_from_slice(&ctx.accounts.user.key().to_bytes());
-        message_bytes.extend_from_slice(&ctx.accounts.user_token_account.key().to_bytes()); // destination binding
-        message_bytes.extend_from_slice(&amount.to_le_bytes()); // amount as LE bytes
-        message_bytes.extend_from_slice(&nonce.to_le_bytes()); // nonce as LE bytes
-        message_bytes.extend_from_slice(&valid_until.to_le_bytes()); // expiry as LE bytes
+        message_bytes.extend_from_slice(&payload_bytes);
 
-        // CRITICAL SECURITY: Proper Ed25519 signature verification using instruction introspection
-        // This implements REAL cryptographic signature verification
-        
-        // Verify signature format
-        require!(
-            user_signature.len() == 64,
-            RiyalError::InvalidUserSignature
-        );
-
+        // CRITICAL SECURITY: Verify admin signature format
         require!(
             admin_signature.len() == 64,
             RiyalError::InvalidAdminSignature
         );
 
-        // Verify signatures are not empty
-        let user_sig_sum: u64 = user_signature.iter().map(|&x| x as u64).sum();
+        // Verify signature is not empty
         let admin_sig_sum: u64 = admin_signature.iter().map(|&x| x as u64).sum();
-        
-        require!(
-            user_sig_sum > 0,
-            RiyalError::InvalidUserSignature
-        );
-
         require!(
             admin_sig_sum > 0,
             RiyalError::InvalidAdminSignature
         );
 
-        // ENHANCED SECURITY: Verify Ed25519 signatures using proper Solana method with domain separation
-        // This requires Ed25519 verify instructions to be included in the transaction
-        verify_ed25519_signatures_in_transaction(
+        // ENHANCED SECURITY: Verify only admin signature using Ed25519 program
+        // This requires an Ed25519 verify instruction to be included in the transaction
+        verify_admin_signature_only(
             &ctx.accounts.instructions,
             &message_bytes,
-            &user_signature,
             &admin_signature,
-            &ctx.accounts.user.key(),
             &token_state.admin,
         )?;
 
@@ -396,7 +380,7 @@ pub mod riyal_contract {
         let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
 
         // Mint tokens
-        anchor_spl::token_interface::mint_to(cpi_ctx, amount)?;
+        anchor_spl::token_interface::mint_to(cpi_ctx, payload.claim_amount)?;
 
         // Freeze logic removed - tokens are always transferable after claiming
 
@@ -423,7 +407,7 @@ pub mod riyal_contract {
         msg!(
             "CLAIM SUCCESSFUL: User: {}, Amount: {}, Nonce used: {}, New nonce: {}, Timestamp: {}, Total claims: {}",
             ctx.accounts.user.key(),
-            amount,
+            payload.claim_amount,
             old_nonce,
             user_data.nonce,
             current_timestamp,
@@ -1255,8 +1239,8 @@ pub struct ClaimTokens<'info> {
     )]
     pub user_token_account: InterfaceAccount<'info, TokenAccount>,
 
-    /// CHECK: User pubkey is verified through signature verification
-    pub user: UncheckedAccount<'info>,
+    /// User must sign the transaction to prove ownership
+    pub user: Signer<'info>,
 
     /// CHECK: Instructions sysvar for Ed25519 signature verification
     #[account(address = instructions::ID)]
