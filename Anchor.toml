@@ -6,13 +6,16 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-riyal_contract = "3DAyy3hk9x4LPKzJMLsGeMj7pFWyavf9624LTMhrhDbH"
+riyal_contract = "DUALvp1DCViwVuWYPF66uPcdwiGXXLSW1pPXcAei3ihK"
+
+[programs.devnet]
+riyal_contract = "DUALvp1DCViwVuWYPF66uPcdwiGXXLSW1pPXcAei3ihK"
 
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "localnet"
+cluster = "devnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]

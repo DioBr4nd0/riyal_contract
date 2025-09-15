@@ -139,4 +139,10 @@ pub enum RiyalError {
     
     #[msg("Invalid claim payload - failed to deserialize")]
     InvalidClaimPayload,
+    
+    #[msg("Transfers are paused - token transfers are currently disabled")]
+    TransfersPaused,
+    
+    #[msg("Transfers are permanently enabled and cannot be paused")]
+    TransfersPermanentlyEnabled,
 }

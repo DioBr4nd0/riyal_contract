@@ -11,7 +11,7 @@ use errors::*;
 pub mod signature;
 use signature::verify_admin_signature_only;
 
-declare_id!("A8S99EvMvPXP88Whc7d9N482NJm7EDWimeVLrf5i14EW");
+declare_id!("DUALvp1DCViwVuWYPF66uPcdwiGXXLSW1pPXcAei3ihK");
 
 /// Claim payload structure that gets signed by admin
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
@@ -71,7 +71,7 @@ pub mod riyal_contract {
         Ok(())
     }
 
-    /// Create SPL token mint with admin as mint authority
+    /// Create SPL Token-2022 mint (starts with transfers paused)
     pub fn create_token_mint(
         ctx: Context<CreateTokenMint>,
         decimals: u8,
@@ -103,13 +103,129 @@ pub mod riyal_contract {
         token_state.token_name = name.clone();
         token_state.token_symbol = symbol.clone();
         token_state.decimals = decimals;
+        
+        // Start with transfers DISABLED (paused)
+        token_state.transfers_enabled = false;
 
         msg!(
-            "Token mint created: {} ({}) with {} decimals, mint authority: {}",
+            "Token mint created: {} ({}) with {} decimals, mint authority: {}, transfers: PAUSED",
             name,
             symbol,
             decimals,
             token_state.admin
+        );
+
+        Ok(())
+    }
+
+    /// Check if transfers are enabled (used by transfer functions)
+    pub fn check_transfers_enabled(ctx: Context<CheckTransfersEnabled>) -> Result<()> {
+        let token_state = &ctx.accounts.token_state;
+
+        // Check if transfers are enabled
+        require!(
+            token_state.transfers_enabled,
+            RiyalError::TransfersPaused
+        );
+
+        msg!(
+            "Transfers are enabled: {}",
+            token_state.transfers_enabled
+        );
+
+        Ok(())
+    }
+
+    /// Pause token transfers (admin only)
+    pub fn pause_transfers(ctx: Context<PauseTransfers>) -> Result<()> {
+        let token_state = &mut ctx.accounts.token_state;
+        
+        // Verify admin is calling this function
+        require!(
+            ctx.accounts.admin.key() == token_state.admin,
+            RiyalError::UnauthorizedAdmin
+        );
+
+        // Verify contract is initialized
+        require!(
+            token_state.is_initialized,
+            RiyalError::ContractNotInitialized
+        );
+
+        // Check if transfers are permanently enabled (cannot be paused)
+        require!(
+            !token_state.transfers_permanently_enabled,
+            RiyalError::TransfersPermanentlyEnabled
+        );
+
+        token_state.transfers_enabled = false;
+
+        msg!(
+            "TRANSFERS PAUSED by admin: {}",
+            ctx.accounts.admin.key()
+        );
+
+        Ok(())
+    }
+
+    /// Resume token transfers (admin only)
+    pub fn resume_transfers(ctx: Context<ResumeTransfers>) -> Result<()> {
+        let token_state = &mut ctx.accounts.token_state;
+        
+        // Verify admin is calling this function
+        require!(
+            ctx.accounts.admin.key() == token_state.admin,
+            RiyalError::UnauthorizedAdmin
+        );
+
+        // Verify contract is initialized
+        require!(
+            token_state.is_initialized,
+            RiyalError::ContractNotInitialized
+        );
+
+        token_state.transfers_enabled = true;
+
+        // Get current timestamp
+        let clock = Clock::get()?;
+        token_state.transfer_enable_timestamp = clock.unix_timestamp;
+
+        msg!(
+            "TRANSFERS RESUMED by admin: {} at timestamp: {}",
+            ctx.accounts.admin.key(),
+            clock.unix_timestamp
+        );
+
+        Ok(())
+    }
+
+    /// Permanently enable transfers (admin only) - cannot be undone
+    pub fn permanently_enable_transfers(ctx: Context<PermanentlyEnableTransfers>) -> Result<()> {
+        let token_state = &mut ctx.accounts.token_state;
+        
+        // Verify admin is calling this function
+        require!(
+            ctx.accounts.admin.key() == token_state.admin,
+            RiyalError::UnauthorizedAdmin
+        );
+
+        // Verify contract is initialized
+        require!(
+            token_state.is_initialized,
+            RiyalError::ContractNotInitialized
+        );
+
+        token_state.transfers_enabled = true;
+        token_state.transfers_permanently_enabled = true;
+
+        // Get current timestamp
+        let clock = Clock::get()?;
+        token_state.transfer_enable_timestamp = clock.unix_timestamp;
+
+        msg!(
+            "TRANSFERS PERMANENTLY ENABLED by admin: {} at timestamp: {} - CANNOT BE REVERSED",
+            ctx.accounts.admin.key(),
+            clock.unix_timestamp
         );
 
         Ok(())
@@ -1439,6 +1555,60 @@ pub struct BurnFromTreasury<'info> {
     pub admin: Signer<'info>,
     
     pub token_program: Program<'info, Token2022>,
+}
+
+#[derive(Accounts)]
+pub struct CheckTransfersEnabled<'info> {
+    #[account(
+        seeds = [b"token_state"],
+        bump
+    )]
+    pub token_state: Account<'info, TokenState>,
+}
+
+#[derive(Accounts)]
+pub struct PauseTransfers<'info> {
+    #[account(
+        mut,
+        seeds = [b"token_state"],
+        bump
+    )]
+    pub token_state: Account<'info, TokenState>,
+    
+    #[account(
+        constraint = admin.key() == token_state.admin @ RiyalError::UnauthorizedAdmin
+    )]
+    pub admin: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct ResumeTransfers<'info> {
+    #[account(
+        mut,
+        seeds = [b"token_state"],
+        bump
+    )]
+    pub token_state: Account<'info, TokenState>,
+    
+    #[account(
+        constraint = admin.key() == token_state.admin @ RiyalError::UnauthorizedAdmin
+    )]
+    pub admin: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct PermanentlyEnableTransfers<'info> {
+    #[account(
+        mut,
+        seeds = [b"token_state"],
+        bump
+    )]
+    pub token_state: Account<'info, TokenState>,
+    
+    #[account(
+        constraint = admin.key() == token_state.admin @ RiyalError::UnauthorizedAdmin
+    )]
+    pub admin: Signer<'info>,
 }
 
 #[account]
