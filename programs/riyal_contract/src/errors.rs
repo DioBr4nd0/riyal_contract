@@ -145,4 +145,7 @@ pub enum RiyalError {
     
     #[msg("Transfers are permanently enabled and cannot be paused")]
     TransfersPermanentlyEnabled,
+    
+    #[msg("Transfers must be permanently enabled to unfreeze accounts")]
+    TransfersNotPermanentlyEnabled,
 }

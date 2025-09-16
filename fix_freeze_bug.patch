@@ -1,0 +1,30 @@
+// SECURITY FIX: Add freeze logic back to claim_tokens function
+// This should be added after line 619 (after mint_to call)
+
+// AUTO-FREEZE: Immediately freeze the token account after claiming (same as mint_tokens)
+let freeze_seeds = &[
+    b"token_state".as_ref(),
+    &[ctx.bumps.token_state],
+];
+let freeze_signer_seeds = &[&freeze_seeds[..]];
+
+let freeze_cpi_accounts = FreezeAccount {
+    account: ctx.accounts.user_token_account.to_account_info(),
+    mint: ctx.accounts.mint.to_account_info(),
+    authority: ctx.accounts.token_state.to_account_info(),
+};
+let freeze_cpi_program = ctx.accounts.token_program.to_account_info();
+let freeze_cpi_ctx = CpiContext::new_with_signer(freeze_cpi_program, freeze_cpi_accounts, freeze_signer_seeds);
+
+// Freeze the account immediately after claiming (just like mint_tokens does)
+freeze_account(freeze_cpi_ctx)?;
+
+msg!(
+    "CLAIMED {} tokens and IMMEDIATELY FROZEN account: {} - transfers blocked until admin enables",
+    payload.claim_amount,
+    ctx.accounts.user_token_account.key()
+);
+
+// REMOVE THESE COMMENTS (lines 607 and 621):
+// // Freeze/thaw logic removed for simplicity - tokens can always be claimed
+// // Freeze logic removed - tokens are always transferable after claiming

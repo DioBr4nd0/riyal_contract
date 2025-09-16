@@ -34,7 +34,7 @@ const fs = require('fs');
 // ========================================
 
 // Number of accounts to generate and test concurrently
-const NUMBER_OF_ACCOUNTS = 5; // CHANGE THIS NUMBER FOR STRESS TEST SIZE
+const NUMBER_OF_ACCOUNTS = 3; // CHANGE THIS NUMBER FOR STRESS TEST SIZE
 
 // Admin's private key (can be file path or array)
 const ADMIN_KEY_SOURCE = "/Users/mercle/.config/solana/id.json"; // or use array: [1,2,3,...]

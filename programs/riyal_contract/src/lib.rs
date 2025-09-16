@@ -604,8 +604,6 @@ pub mod riyal_contract {
         ];
         let signer_seeds = &[&seeds[..]];
 
-        // Freeze/thaw logic removed for simplicity - tokens can always be claimed
-
         // Create CPI context for minting with PDA as authority
         let cpi_accounts = anchor_spl::token_interface::MintTo {
             mint: ctx.accounts.mint.to_account_info(),
@@ -615,10 +613,26 @@ pub mod riyal_contract {
         let cpi_program = ctx.accounts.token_program.to_account_info();
         let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
 
-        // Mint tokens
+        // Mint tokens first
         anchor_spl::token_interface::mint_to(cpi_ctx, payload.claim_amount)?;
 
-        // Freeze logic removed - tokens are always transferable after claiming
+        // CRITICAL SECURITY: Immediately freeze the account after minting to prevent transfers
+        let freeze_seeds = &[
+            b"token_state".as_ref(),
+            &[ctx.bumps.token_state],
+        ];
+        let freeze_signer_seeds = &[&freeze_seeds[..]];
+
+        let freeze_cpi_accounts = FreezeAccount {
+            account: ctx.accounts.user_token_account.to_account_info(),
+            mint: ctx.accounts.mint.to_account_info(),
+            authority: ctx.accounts.token_state.to_account_info(),
+        };
+        let freeze_cpi_program = ctx.accounts.token_program.to_account_info();
+        let freeze_cpi_ctx = CpiContext::new_with_signer(freeze_cpi_program, freeze_cpi_accounts, freeze_signer_seeds);
+
+        // Freeze the account immediately after claiming
+        freeze_account(freeze_cpi_ctx)?;
 
         // CRITICAL SECURITY UPDATE: Increment nonce and update security tracking
         let old_nonce = user_data.nonce;
@@ -839,10 +853,34 @@ pub mod riyal_contract {
         ];
         let _signer_seeds = &[&seeds[..]];
 
-        // Freeze/thaw logic removed for simplicity - tokens can always be claimed
+        // CRITICAL SECURITY: Only unfreeze if transfers are permanently enabled
+        // This prevents temporary unfreezing exploits
+        require!(
+            token_state.transfers_permanently_enabled,
+            RiyalError::TransfersNotPermanentlyEnabled
+        );
+
+        // Create PDA signer for unfreezing
+        let unfreeze_seeds = &[
+            b"token_state".as_ref(),
+            &[ctx.bumps.token_state],
+        ];
+        let unfreeze_signer_seeds = &[&unfreeze_seeds[..]];
+
+        // Create CPI context for unfreezing
+        let unfreeze_cpi_accounts = ThawAccount {
+            account: ctx.accounts.user_token_account.to_account_info(),
+            mint: ctx.accounts.mint.to_account_info(),
+            authority: ctx.accounts.token_state.to_account_info(),
+        };
+        let unfreeze_cpi_program = ctx.accounts.token_program.to_account_info();
+        let unfreeze_cpi_ctx = CpiContext::new_with_signer(unfreeze_cpi_program, unfreeze_cpi_accounts, unfreeze_signer_seeds);
+
+        // Unfreeze the account (only when transfers are permanently enabled)
+        thaw_account(unfreeze_cpi_ctx)?;
 
         msg!(
-            "ACCOUNT UNFROZEN: User: {}, Account: {}, Timestamp: {} - Transfers now enabled",
+            "ACCOUNT UNFROZEN: User: {}, Account: {}, Timestamp: {} - PERMANENT TRANSFERS ENABLED",
             ctx.accounts.user.key(),
             ctx.accounts.user_token_account.key(),
             current_timestamp
