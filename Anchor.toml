@@ -15,7 +15,7 @@ riyal_contract = "DUALvp1DCViwVuWYPF66uPcdwiGXXLSW1pPXcAei3ihK"
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "devnet"
+cluster = "localnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]
