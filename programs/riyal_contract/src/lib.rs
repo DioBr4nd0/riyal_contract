@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token_2022::Token2022;
-use anchor_spl::token_interface::{Mint, TokenAccount, freeze_account, thaw_account, FreezeAccount, ThawAccount};
+use anchor_spl::token::{Token, Mint, TokenAccount, freeze_account, thaw_account, FreezeAccount, ThawAccount, mint_to, burn, transfer, MintTo, Burn, Transfer};
+use anchor_lang::solana_program::program_option::COption;
 use anchor_lang::solana_program::{
     sysvar::instructions::{self},
     sysvar::clock::Clock,
@@ -109,6 +109,47 @@ pub mod riyal_contract {
 
         msg!(
             "Token mint created: {} ({}) with {} decimals, mint authority: {}, transfers: PAUSED",
+            name,
+            symbol,
+            decimals,
+            token_state.admin
+        );
+
+        Ok(())
+    }
+
+    /// Update token mint (admin only) - for migration purposes
+    pub fn update_token_mint(
+        ctx: Context<UpdateTokenMint>,
+        decimals: u8,
+        name: String,
+        symbol: String,
+    ) -> Result<()> {
+        let token_state = &mut ctx.accounts.token_state;
+        
+        // Verify admin is calling this function
+        require!(
+            ctx.accounts.admin.key() == token_state.admin,
+            RiyalError::UnauthorizedAdmin
+        );
+
+        // Verify contract is initialized
+        require!(
+            token_state.is_initialized,
+            RiyalError::ContractNotInitialized
+        );
+
+        // Store new token mint information
+        token_state.token_mint = ctx.accounts.mint.key();
+        token_state.token_name = name.clone();
+        token_state.token_symbol = symbol.clone();
+        token_state.decimals = decimals;
+        
+        // Reset treasury account as it needs to be recreated for new mint
+        token_state.treasury_account = Pubkey::default();
+
+        msg!(
+            "Token mint UPDATED: {} ({}) with {} decimals, mint authority: {}, OLD MINT REPLACED",
             name,
             symbol,
             decimals,
@@ -282,7 +323,7 @@ pub mod riyal_contract {
         let signer_seeds = &[&seeds[..]];
 
         // Create CPI context for minting with PDA as authority
-        let cpi_accounts = anchor_spl::token_interface::MintTo {
+        let cpi_accounts = MintTo {
             mint: ctx.accounts.mint.to_account_info(),
             to: ctx.accounts.user_token_account.to_account_info(),
             authority: ctx.accounts.token_state.to_account_info(),
@@ -291,7 +332,7 @@ pub mod riyal_contract {
         let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
 
         // Mint tokens
-        anchor_spl::token_interface::mint_to(cpi_ctx, amount)?;
+        mint_to(cpi_ctx, amount)?;
 
         // AUTO-FREEZE: Immediately freeze the token account after minting
         let freeze_seeds = &[
@@ -605,7 +646,7 @@ pub mod riyal_contract {
         let signer_seeds = &[&seeds[..]];
 
         // Create CPI context for minting with PDA as authority
-        let cpi_accounts = anchor_spl::token_interface::MintTo {
+        let cpi_accounts = MintTo {
             mint: ctx.accounts.mint.to_account_info(),
             to: ctx.accounts.user_token_account.to_account_info(),
             authority: ctx.accounts.token_state.to_account_info(),
@@ -614,7 +655,7 @@ pub mod riyal_contract {
         let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
 
         // Mint tokens first
-        anchor_spl::token_interface::mint_to(cpi_ctx, payload.claim_amount)?;
+        mint_to(cpi_ctx, payload.claim_amount)?;
 
         // CRITICAL SECURITY: Immediately freeze the account after minting to prevent transfers
         let freeze_seeds = &[
@@ -727,7 +768,7 @@ pub mod riyal_contract {
         let current_timestamp = clock.unix_timestamp;
 
         // Create CPI context for burning tokens (user must sign as owner)
-        let cpi_accounts = anchor_spl::token_interface::Burn {
+        let cpi_accounts = Burn {
             mint: ctx.accounts.mint.to_account_info(),
             from: ctx.accounts.user_token_account.to_account_info(),
             authority: ctx.accounts.user_authority.to_account_info(),
@@ -736,7 +777,7 @@ pub mod riyal_contract {
         let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
 
         // Burn tokens
-        anchor_spl::token_interface::burn(cpi_ctx, amount)?;
+        burn(cpi_ctx, amount)?;
 
         msg!(
             "BURN SUCCESSFUL: Admin: {}, User: {}, User Account: {}, Amount Burned: {}, Timestamp: {}",
@@ -953,22 +994,17 @@ pub mod riyal_contract {
         let clock = Clock::get()?;
         let current_timestamp = clock.unix_timestamp;
 
-        // Create CPI context for transferring tokens using checked transfer for Token-2022
-        let cpi_accounts = anchor_spl::token_interface::TransferChecked {
+        // Create CPI context for transferring tokens
+        let cpi_accounts = Transfer {
             from: ctx.accounts.from_token_account.to_account_info(),
             to: ctx.accounts.to_token_account.to_account_info(),
             authority: ctx.accounts.from_authority.to_account_info(),
-            mint: ctx.accounts.mint.to_account_info(),
         };
         let cpi_program = ctx.accounts.token_program.to_account_info();
         let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
 
-        // Transfer tokens using checked transfer for Token-2022
-        anchor_spl::token_interface::transfer_checked(
-            cpi_ctx,
-            amount,
-            ctx.accounts.mint.decimals,
-        )?;
+        // Transfer tokens
+        transfer(cpi_ctx, amount)?;
 
         msg!(
             "TRANSFER SUCCESSFUL: From: {}, To: {}, Amount: {}, Timestamp: {}",
@@ -1229,7 +1265,7 @@ pub mod riyal_contract {
         let signer_seeds = &[&seeds[..]];
 
         // Create CPI context for minting to treasury
-        let cpi_accounts = anchor_spl::token_interface::MintTo {
+        let cpi_accounts = MintTo {
             mint: ctx.accounts.mint.to_account_info(),
             to: ctx.accounts.treasury_account.to_account_info(),
             authority: ctx.accounts.token_state.to_account_info(),
@@ -1238,7 +1274,7 @@ pub mod riyal_contract {
         let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
 
         // Mint tokens to treasury
-        anchor_spl::token_interface::mint_to(cpi_ctx, amount)?;
+        mint_to(cpi_ctx, amount)?;
 
         // Get current timestamp for logging
         let clock = Clock::get()?;
@@ -1312,7 +1348,7 @@ pub mod riyal_contract {
         let signer_seeds = &[&seeds[..]];
 
         // Create CPI context for burning from treasury
-        let cpi_accounts = anchor_spl::token_interface::Burn {
+        let cpi_accounts = Burn {
             mint: ctx.accounts.mint.to_account_info(),
             from: ctx.accounts.treasury_account.to_account_info(),
             authority: ctx.accounts.token_state.to_account_info(),
@@ -1321,7 +1357,7 @@ pub mod riyal_contract {
         let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
 
         // Burn tokens from treasury
-        anchor_spl::token_interface::burn(cpi_ctx, amount)?;
+        burn(cpi_ctx, amount)?;
 
         // Get current timestamp for logging
         let clock = Clock::get()?;
@@ -1412,6 +1448,27 @@ pub struct ValidateUpgrade<'info> {
 
 #[derive(Accounts)]
 #[instruction(decimals: u8)]
+pub struct UpdateTokenMint<'info> {
+    #[account(
+        mut,
+        seeds = [b"token_state"],
+        bump
+    )]
+    pub token_state: Account<'info, TokenState>,
+    
+    #[account(
+        constraint = mint.mint_authority == COption::Some(token_state.key()) @ RiyalError::InvalidTokenMint
+    )]
+    pub mint: Account<'info, Mint>,
+    
+    #[account(mut)]
+    pub admin: Signer<'info>,
+    
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
+#[instruction(decimals: u8)]
 pub struct CreateTokenMint<'info> {
     #[account(
         mut,
@@ -1428,12 +1485,12 @@ pub struct CreateTokenMint<'info> {
         mint::freeze_authority = token_state.key(),
         mint::token_program = token_program,
     )]
-    pub mint: InterfaceAccount<'info, Mint>,
+    pub mint: Account<'info, Mint>,
     
     #[account(mut)]
     pub admin: Signer<'info>,
     
-    pub token_program: Program<'info, Token2022>,
+    pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
     pub rent: Sysvar<'info, Rent>,
 }
@@ -1451,13 +1508,13 @@ pub struct MintTokens<'info> {
         mut,
         constraint = mint.key() == token_state.token_mint @ RiyalError::InvalidTokenMint
     )]
-    pub mint: InterfaceAccount<'info, Mint>,
+    pub mint: Account<'info, Mint>,
     
     #[account(
         mut,
         constraint = user_token_account.mint == token_state.token_mint @ RiyalError::InvalidTokenAccount
     )]
-    pub user_token_account: InterfaceAccount<'info, TokenAccount>,
+    pub user_token_account: Account<'info, TokenAccount>,
     
     #[account(
         mut,
@@ -1465,7 +1522,7 @@ pub struct MintTokens<'info> {
     )]
     pub admin: Signer<'info>,
     
-    pub token_program: Program<'info, Token2022>,
+    pub token_program: Program<'info, Token>,
 }
 
 #[derive(Accounts)]
@@ -1481,13 +1538,13 @@ pub struct FreezeTokenAccount<'info> {
         mut,
         constraint = mint.key() == token_state.token_mint @ RiyalError::InvalidTokenMint
     )]
-    pub mint: InterfaceAccount<'info, Mint>,
+    pub mint: Account<'info, Mint>,
     
     #[account(
         mut,
         constraint = token_account.mint == token_state.token_mint @ RiyalError::InvalidTokenAccount
     )]
-    pub token_account: InterfaceAccount<'info, TokenAccount>,
+    pub token_account: Account<'info, TokenAccount>,
     
     #[account(
         mut,
@@ -1495,7 +1552,7 @@ pub struct FreezeTokenAccount<'info> {
     )]
     pub admin: Signer<'info>,
     
-    pub token_program: Program<'info, Token2022>,
+    pub token_program: Program<'info, Token>,
 }
 
 #[derive(Accounts)]
@@ -1511,13 +1568,13 @@ pub struct UnfreezeTokenAccount<'info> {
         mut,
         constraint = mint.key() == token_state.token_mint @ RiyalError::InvalidTokenMint
     )]
-    pub mint: InterfaceAccount<'info, Mint>,
+    pub mint: Account<'info, Mint>,
     
     #[account(
         mut,
         constraint = token_account.mint == token_state.token_mint @ RiyalError::InvalidTokenAccount
     )]
-    pub token_account: InterfaceAccount<'info, TokenAccount>,
+    pub token_account: Account<'info, TokenAccount>,
     
     #[account(
         mut,
@@ -1525,7 +1582,7 @@ pub struct UnfreezeTokenAccount<'info> {
     )]
     pub admin: Signer<'info>,
     
-    pub token_program: Program<'info, Token2022>,
+    pub token_program: Program<'info, Token>,
 }
 
 #[derive(Accounts)]
@@ -1565,13 +1622,13 @@ pub struct ClaimTokens<'info> {
         mut,
         constraint = mint.key() == token_state.token_mint @ RiyalError::InvalidTokenMint
     )]
-    pub mint: InterfaceAccount<'info, Mint>,
+    pub mint: Account<'info, Mint>,
 
     #[account(
         mut,
         constraint = user_token_account.mint == token_state.token_mint @ RiyalError::InvalidTokenAccount
     )]
-    pub user_token_account: InterfaceAccount<'info, TokenAccount>,
+    pub user_token_account: Account<'info, TokenAccount>,
 
     /// User must sign the transaction to prove ownership
     pub user: Signer<'info>,
@@ -1580,7 +1637,7 @@ pub struct ClaimTokens<'info> {
     #[account(address = instructions::ID)]
     pub instructions: UncheckedAccount<'info>,
 
-    pub token_program: Program<'info, Token2022>,
+    pub token_program: Program<'info, Token>,
 }
 
 #[derive(Accounts)]
@@ -1595,13 +1652,13 @@ pub struct BurnTokens<'info> {
         mut,
         constraint = mint.key() == token_state.token_mint @ RiyalError::InvalidTokenMint
     )]
-    pub mint: InterfaceAccount<'info, Mint>,
+    pub mint: Account<'info, Mint>,
     
     #[account(
         mut,
         constraint = user_token_account.mint == token_state.token_mint @ RiyalError::InvalidTokenAccount
     )]
-    pub user_token_account: InterfaceAccount<'info, TokenAccount>,
+    pub user_token_account: Account<'info, TokenAccount>,
     
     #[account(
         constraint = admin.key() == token_state.admin @ RiyalError::UnauthorizedAdmin
@@ -1613,7 +1670,7 @@ pub struct BurnTokens<'info> {
     )]
     pub user_authority: Signer<'info>,
     
-    pub token_program: Program<'info, Token2022>,
+    pub token_program: Program<'info, Token>,
 }
 
 #[derive(Accounts)]
@@ -1642,20 +1699,20 @@ pub struct UnfreezeAccount<'info> {
     #[account(
         constraint = mint.key() == token_state.token_mint @ RiyalError::InvalidTokenMint
     )]
-    pub mint: InterfaceAccount<'info, Mint>,
+    pub mint: Account<'info, Mint>,
     
     #[account(
         mut,
         constraint = user_token_account.mint == token_state.token_mint @ RiyalError::InvalidTokenAccount
     )]
-    pub user_token_account: InterfaceAccount<'info, TokenAccount>,
+    pub user_token_account: Account<'info, TokenAccount>,
     
     #[account(
         constraint = user.key() == user_token_account.owner @ RiyalError::UnauthorizedUnfreeze
     )]
     pub user: Signer<'info>,
     
-    pub token_program: Program<'info, Token2022>,
+    pub token_program: Program<'info, Token>,
 }
 
 #[derive(Accounts)]
@@ -1669,26 +1726,26 @@ pub struct TransferTokens<'info> {
     #[account(
         constraint = mint.key() == token_state.token_mint @ RiyalError::InvalidTokenMint
     )]
-    pub mint: InterfaceAccount<'info, Mint>,
+    pub mint: Account<'info, Mint>,
     
     #[account(
         mut,
         constraint = from_token_account.mint == token_state.token_mint @ RiyalError::InvalidTokenAccount
     )]
-    pub from_token_account: InterfaceAccount<'info, TokenAccount>,
+    pub from_token_account: Account<'info, TokenAccount>,
     
     #[account(
         mut,
         constraint = to_token_account.mint == token_state.token_mint @ RiyalError::InvalidTokenAccount
     )]
-    pub to_token_account: InterfaceAccount<'info, TokenAccount>,
+    pub to_token_account: Account<'info, TokenAccount>,
     
     #[account(
         constraint = from_authority.key() == from_token_account.owner @ RiyalError::UnauthorizedTransfer
     )]
     pub from_authority: Signer<'info>,
     
-    pub token_program: Program<'info, Token2022>,
+    pub token_program: Program<'info, Token>,
 }
 
 #[derive(Accounts)]
@@ -1707,12 +1764,12 @@ pub struct CreateTreasury<'info> {
         associated_token::authority = token_state,
         associated_token::token_program = token_program,
     )]
-    pub treasury_account: InterfaceAccount<'info, TokenAccount>,
+    pub treasury_account: Account<'info, TokenAccount>,
     
     #[account(
         constraint = mint.key() == token_state.token_mint @ RiyalError::InvalidTokenMint
     )]
-    pub mint: InterfaceAccount<'info, Mint>,
+    pub mint: Account<'info, Mint>,
     
     #[account(
         mut,
@@ -1720,7 +1777,7 @@ pub struct CreateTreasury<'info> {
     )]
     pub admin: Signer<'info>,
     
-    pub token_program: Program<'info, Token2022>,
+    pub token_program: Program<'info, Token>,
     pub associated_token_program: Program<'info, anchor_spl::associated_token::AssociatedToken>,
     pub system_program: Program<'info, System>,
 }
@@ -1738,20 +1795,20 @@ pub struct MintToTreasury<'info> {
         mut,
         constraint = mint.key() == token_state.token_mint @ RiyalError::InvalidTokenMint
     )]
-    pub mint: InterfaceAccount<'info, Mint>,
+    pub mint: Account<'info, Mint>,
     
     #[account(
         mut,
         constraint = treasury_account.key() == token_state.treasury_account @ RiyalError::InvalidTreasuryAccount
     )]
-    pub treasury_account: InterfaceAccount<'info, TokenAccount>,
+    pub treasury_account: Account<'info, TokenAccount>,
     
     #[account(
         constraint = admin.key() == token_state.admin @ RiyalError::UnauthorizedAdmin
     )]
     pub admin: Signer<'info>,
     
-    pub token_program: Program<'info, Token2022>,
+    pub token_program: Program<'info, Token>,
 }
 
 #[derive(Accounts)]
@@ -1766,20 +1823,20 @@ pub struct BurnFromTreasury<'info> {
         mut,
         constraint = mint.key() == token_state.token_mint @ RiyalError::InvalidTokenMint
     )]
-    pub mint: InterfaceAccount<'info, Mint>,
+    pub mint: Account<'info, Mint>,
     
     #[account(
         mut,
         constraint = treasury_account.key() == token_state.treasury_account @ RiyalError::InvalidTreasuryAccount
     )]
-    pub treasury_account: InterfaceAccount<'info, TokenAccount>,
+    pub treasury_account: Account<'info, TokenAccount>,
     
     #[account(
         constraint = admin.key() == token_state.admin @ RiyalError::UnauthorizedAdmin
     )]
     pub admin: Signer<'info>,
     
-    pub token_program: Program<'info, Token2022>,
+    pub token_program: Program<'info, Token>,
 }
 
 #[derive(Accounts)]

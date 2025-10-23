@@ -22,7 +22,7 @@ const {
   Ed25519Program 
 } = require("@solana/web3.js");
 const { 
-  TOKEN_2022_PROGRAM_ID,
+  TOKEN_PROGRAM_ID,
   getAssociatedTokenAddress,
   createAssociatedTokenAccountInstruction,
 } = require("@solana/spl-token");
@@ -223,7 +223,7 @@ async function createAllTokenAccounts(connection, admin, tokenMint, accounts) {
         tokenMint,
         accountData.account.keypair.publicKey,
         false,
-        TOKEN_2022_PROGRAM_ID
+        TOKEN_PROGRAM_ID
       );
       
       // Check if exists
@@ -238,7 +238,7 @@ async function createAllTokenAccounts(connection, admin, tokenMint, accounts) {
             tokenAccount,
             accountData.account.keypair.publicKey,
             tokenMint,
-            TOKEN_2022_PROGRAM_ID
+            TOKEN_PROGRAM_ID
           )
         );
         
@@ -393,7 +393,7 @@ async function processClaimsInBatches(claimPromises, batchSize, delayMs) {
             userTokenAccount: accountData.tokenAccount,
             user: accountData.account.keypair.publicKey,
             instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
-            tokenProgram: TOKEN_2022_PROGRAM_ID,
+            tokenProgram: TOKEN_PROGRAM_ID,
           })
           .instruction();
         
