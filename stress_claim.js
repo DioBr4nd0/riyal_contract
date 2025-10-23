@@ -34,7 +34,7 @@ const fs = require('fs');
 // ========================================
 
 // Number of accounts to generate and test concurrently
-const NUMBER_OF_ACCOUNTS = 3; // CHANGE THIS NUMBER FOR STRESS TEST SIZE
+const NUMBER_OF_ACCOUNTS = 1; // CHANGE THIS NUMBER FOR STRESS TEST SIZE
 
 // Admin's private key (can be file path or array)
 const ADMIN_KEY_SOURCE = "/Users/mercle/.config/solana/id.json"; // or use array: [1,2,3,...]
@@ -50,7 +50,7 @@ const RPC_URL = "https://api.devnet.solana.com";
 const FUNDING_AMOUNT_SOL = 0.2; // SOL to fund each test account
 
 // Concurrency settings
-const MAX_CONCURRENT_REQUESTS = 10; // Limit concurrent requests to avoid rate limits
+const MAX_CONCURRENT_REQUESTS = 1; // Limit concurrent requests to avoid rate limits
 const DELAY_BETWEEN_BATCHES_MS = 1000; // Delay between batches of requests
 
 // ========================================
