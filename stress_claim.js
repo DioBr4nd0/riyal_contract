@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 
 /**
- * RIYAL TOKEN STRESS TEST SCRIPT
+ * MERCLE TOKEN STRESS TEST SCRIPT
  * 
  * Generates multiple random accounts and sends concurrent claim requests
- * to test the contract's performance under load.
+ * to test the Mercle token contract's performance under load.
  * 
  * USAGE:
  * 1. Set NUMBER_OF_ACCOUNTS to desired stress test size
  * 2. Configure admin key and other parameters
- * 3. Run: node stress-test-claims.js
+ * 3. Run: node stress_claim.js
  */
 
 const anchor = require("@coral-xyz/anchor");
@@ -34,7 +34,7 @@ const fs = require('fs');
 // ========================================
 
 // Number of accounts to generate and test concurrently
-const NUMBER_OF_ACCOUNTS = 1; // CHANGE THIS NUMBER FOR STRESS TEST SIZE
+const NUMBER_OF_ACCOUNTS = 3; // CHANGE THIS NUMBER FOR STRESS TEST SIZE
 
 // Admin's private key (can be file path or array)
 const ADMIN_KEY_SOURCE = "/Users/mercle/.config/solana/id.json"; // or use array: [1,2,3,...]
@@ -50,7 +50,7 @@ const RPC_URL = "https://api.devnet.solana.com";
 const FUNDING_AMOUNT_SOL = 0.2; // SOL to fund each test account
 
 // Concurrency settings
-const MAX_CONCURRENT_REQUESTS = 1; // Limit concurrent requests to avoid rate limits
+const MAX_CONCURRENT_REQUESTS = 10; // Limit concurrent requests to avoid rate limits
 const DELAY_BETWEEN_BATCHES_MS = 1000; // Delay between batches of requests
 
 // ========================================
@@ -98,7 +98,7 @@ function createDomainSeparatedMessage(programId, payload) {
   const payloadBytes = serializeClaimPayload(payload);
   
   return Buffer.concat([
-    Buffer.from("RIYAL_CLAIM_V2", 'utf8'),
+    Buffer.from("MERCLE_CLAIM_V1", 'utf8'),
     programId.toBuffer(),
     payloadBytes
   ]);
@@ -299,8 +299,8 @@ async function processClaimsInBatches(claimPromises, batchSize, delayMs) {
 // ========================================
 
 (async () => {
-  console.log("🎯 RIYAL TOKEN STRESS TEST");
-  console.log("==========================");
+  console.log("🎯 MERCLE TOKEN STRESS TEST");
+  console.log("===========================");
   console.log(`📊 Testing with ${NUMBER_OF_ACCOUNTS} concurrent accounts`);
   console.log(`⚡ Max concurrent requests: ${MAX_CONCURRENT_REQUESTS}`);
   console.log("");
@@ -319,7 +319,7 @@ async function processClaimsInBatches(claimPromises, batchSize, delayMs) {
     anchor.setProvider(provider);
     
     // Load program
-    const program = anchor.workspace.RiyalContract;
+    const program = anchor.workspace.MercleToken;
     const programId = program.programId;
     
     console.log(`📋 Contract: ${programId.toString()}`);

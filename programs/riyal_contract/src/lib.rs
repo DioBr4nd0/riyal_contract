@@ -1,3 +1,6 @@
+#![allow(unexpected_cfgs)]
+#![allow(deprecated)]
+
 use anchor_lang::prelude::*;
 use anchor_spl::token::{Token, Mint, TokenAccount, freeze_account, thaw_account, FreezeAccount, ThawAccount, mint_to, burn, transfer, MintTo, Burn, Transfer};
 use anchor_lang::solana_program::program_option::COption;
@@ -7,13 +10,13 @@ use anchor_lang::solana_program::{
     account_info::AccountInfo,
 };
 pub mod errors;
-use errors::*;
+use errors::MercleError;
 pub mod signature;
 use signature::verify_admin_signature_only;
 
 declare_id!("DUALvp1DCViwVuWYPF66uPcdwiGXXLSW1pPXcAei3ihK");
 
-/// Claim payload structure that gets signed by admin
+/// Mercle token claim payload structure that gets signed by admin
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
 pub struct ClaimPayload {
     pub user_address: Pubkey,
@@ -23,7 +26,7 @@ pub struct ClaimPayload {
 }
 
 #[program]
-pub mod riyal_contract {
+pub mod mercle_token {
     use super::*;
 
     /// Initialize the contract with admin public key, time-lock settings, and upgrade authority
@@ -40,12 +43,12 @@ pub mod riyal_contract {
         // Validate claim period (must be reasonable) - allowing shorter periods for testing
         require!(
             claim_period_seconds >= 30, // Minimum 30 seconds (for testing)
-            RiyalError::InvalidClaimPeriod
+            MercleError::InvalidClaimPeriod
         );
         
         require!(
             claim_period_seconds <= 31536000, // Maximum 1 year
-            RiyalError::InvalidClaimPeriod
+            MercleError::InvalidClaimPeriod
         );
         
         token_state.admin = admin;
@@ -71,7 +74,7 @@ pub mod riyal_contract {
         Ok(())
     }
 
-    /// Create SPL Token-2022 mint (starts with transfers paused)
+    /// Create Mercle SPL Token mint (starts with transfers paused)
     pub fn create_token_mint(
         ctx: Context<CreateTokenMint>,
         decimals: u8,
@@ -83,19 +86,19 @@ pub mod riyal_contract {
         // Verify admin is calling this function
         require!(
             ctx.accounts.admin.key() == token_state.admin,
-            RiyalError::UnauthorizedAdmin
+            MercleError::UnauthorizedAdmin
         );
 
         // Verify contract is initialized
         require!(
             token_state.is_initialized,
-            RiyalError::ContractNotInitialized
+            MercleError::ContractNotInitialized
         );
 
         // CRITICAL: Verify token mint hasn't been created already
         require!(
             token_state.token_mint == Pubkey::default(),
-            RiyalError::TokenMintAlreadyCreated
+            MercleError::TokenMintAlreadyCreated
         );
 
         // Store token mint information
@@ -130,13 +133,13 @@ pub mod riyal_contract {
         // Verify admin is calling this function
         require!(
             ctx.accounts.admin.key() == token_state.admin,
-            RiyalError::UnauthorizedAdmin
+            MercleError::UnauthorizedAdmin
         );
 
         // Verify contract is initialized
         require!(
             token_state.is_initialized,
-            RiyalError::ContractNotInitialized
+            MercleError::ContractNotInitialized
         );
 
         // Store new token mint information
@@ -166,7 +169,7 @@ pub mod riyal_contract {
         // Check if transfers are enabled
         require!(
             token_state.transfers_enabled,
-            RiyalError::TransfersPaused
+            MercleError::TransfersPaused
         );
 
         msg!(
@@ -184,19 +187,19 @@ pub mod riyal_contract {
         // Verify admin is calling this function
         require!(
             ctx.accounts.admin.key() == token_state.admin,
-            RiyalError::UnauthorizedAdmin
+            MercleError::UnauthorizedAdmin
         );
 
         // Verify contract is initialized
         require!(
             token_state.is_initialized,
-            RiyalError::ContractNotInitialized
+            MercleError::ContractNotInitialized
         );
 
         // Check if transfers are permanently enabled (cannot be paused)
         require!(
             !token_state.transfers_permanently_enabled,
-            RiyalError::TransfersPermanentlyEnabled
+            MercleError::TransfersPermanentlyEnabled
         );
 
         token_state.transfers_enabled = false;
@@ -216,13 +219,13 @@ pub mod riyal_contract {
         // Verify admin is calling this function
         require!(
             ctx.accounts.admin.key() == token_state.admin,
-            RiyalError::UnauthorizedAdmin
+            MercleError::UnauthorizedAdmin
         );
 
         // Verify contract is initialized
         require!(
             token_state.is_initialized,
-            RiyalError::ContractNotInitialized
+            MercleError::ContractNotInitialized
         );
 
         token_state.transfers_enabled = true;
@@ -247,13 +250,13 @@ pub mod riyal_contract {
         // Verify admin is calling this function
         require!(
             ctx.accounts.admin.key() == token_state.admin,
-            RiyalError::UnauthorizedAdmin
+            MercleError::UnauthorizedAdmin
         );
 
         // Verify contract is initialized
         require!(
             token_state.is_initialized,
-            RiyalError::ContractNotInitialized
+            MercleError::ContractNotInitialized
         );
 
         token_state.transfers_enabled = true;
@@ -282,37 +285,37 @@ pub mod riyal_contract {
         // Verify admin is calling this function
         require!(
             ctx.accounts.admin.key() == token_state.admin,
-            RiyalError::UnauthorizedAdmin
+            MercleError::UnauthorizedAdmin
         );
 
         // Verify contract is initialized
         require!(
             token_state.is_initialized,
-            RiyalError::ContractNotInitialized
+            MercleError::ContractNotInitialized
         );
 
         // Verify token mint has been created
         require!(
             token_state.token_mint != Pubkey::default(),
-            RiyalError::TokenMintNotCreated
+            MercleError::TokenMintNotCreated
         );
 
         // Verify the mint account matches the stored mint
         require!(
             ctx.accounts.mint.key() == token_state.token_mint,
-            RiyalError::InvalidTokenMint
+            MercleError::InvalidTokenMint
         );
 
         // Verify the token account is for the correct mint
         require!(
             ctx.accounts.user_token_account.mint == token_state.token_mint,
-            RiyalError::InvalidTokenAccount
+            MercleError::InvalidTokenAccount
         );
 
         // Verify amount is not zero
         require!(
             amount > 0,
-            RiyalError::InvalidMintAmount
+            MercleError::InvalidMintAmount
         );
 
         // Create PDA signer for minting
@@ -369,25 +372,25 @@ pub mod riyal_contract {
         // Verify admin is calling this function
         require!(
             ctx.accounts.admin.key() == token_state.admin,
-            RiyalError::UnauthorizedAdmin
+            MercleError::UnauthorizedAdmin
         );
 
         // Verify contract is initialized
         require!(
             token_state.is_initialized,
-            RiyalError::ContractNotInitialized
+            MercleError::ContractNotInitialized
         );
 
         // Verify the mint matches
         require!(
             ctx.accounts.mint.key() == token_state.token_mint,
-            RiyalError::InvalidTokenMint
+            MercleError::InvalidTokenMint
         );
 
         // Verify the token account belongs to this mint
         require!(
             ctx.accounts.token_account.mint == token_state.token_mint,
-            RiyalError::InvalidTokenAccount
+            MercleError::InvalidTokenAccount
         );
 
         // Create signer seeds for PDA authority
@@ -425,25 +428,25 @@ pub mod riyal_contract {
         // Verify admin is calling this function
         require!(
             ctx.accounts.admin.key() == token_state.admin,
-            RiyalError::UnauthorizedAdmin
+            MercleError::UnauthorizedAdmin
         );
 
         // Verify contract is initialized
         require!(
             token_state.is_initialized,
-            RiyalError::ContractNotInitialized
+            MercleError::ContractNotInitialized
         );
 
         // Verify the mint matches
         require!(
             ctx.accounts.mint.key() == token_state.token_mint,
-            RiyalError::InvalidTokenMint
+            MercleError::InvalidTokenMint
         );
 
         // Verify the token account belongs to this mint
         require!(
             ctx.accounts.token_account.mint == token_state.token_mint,
-            RiyalError::InvalidTokenAccount
+            MercleError::InvalidTokenAccount
         );
 
         // Create signer seeds for PDA authority
@@ -508,42 +511,42 @@ pub mod riyal_contract {
         // Verify contract is initialized
         require!(
             token_state.is_initialized,
-            RiyalError::ContractNotInitialized
+            MercleError::ContractNotInitialized
         );
 
         // Verify token mint has been created
         require!(
             token_state.token_mint != Pubkey::default(),
-            RiyalError::TokenMintNotCreated
+            MercleError::TokenMintNotCreated
         );
 
         // Verify the mint account matches the stored mint
         require!(
             ctx.accounts.mint.key() == token_state.token_mint,
-            RiyalError::InvalidTokenMint
+            MercleError::InvalidTokenMint
         );
 
         // Verify the token account is for the correct mint
         require!(
             ctx.accounts.user_token_account.mint == token_state.token_mint,
-            RiyalError::InvalidTokenAccount
+            MercleError::InvalidTokenAccount
         );
 
         // CRITICAL: This check should come FIRST
         require!(
         payload.user_address == ctx.accounts.user.key(),
-        RiyalError::UnauthorizedDestination
+        MercleError::UnauthorizedDestination
         );
         // CRITICAL SECURITY: Verify destination binding - user can only claim to their own token account
         require!(
             ctx.accounts.user_token_account.owner == ctx.accounts.user.key(),
-            RiyalError::UnauthorizedDestination
+            MercleError::UnauthorizedDestination
         );
 
         // Verify amount is not zero
         require!(
             payload.claim_amount > 0,
-            RiyalError::InvalidMintAmount
+            MercleError::InvalidMintAmount
         );
 
         // Get current timestamp for validation
@@ -553,13 +556,13 @@ pub mod riyal_contract {
         // CRITICAL SECURITY CHECK 1: Verify user data belongs to the user
         require!(
             user_data.user == ctx.accounts.user.key(),
-            RiyalError::InvalidUserData
+            MercleError::InvalidUserData
         );
 
         // CRITICAL SECURITY CHECK 2: Verify nonce matches user's current nonce (prevent replay attacks)
         require!(
             payload.nonce == user_data.nonce,
-            RiyalError::InvalidNonce
+            MercleError::InvalidNonce
         );
 
         // CRITICAL SECURITY CHECK 5: TIME-LOCK VALIDATION - enforce claim periods
@@ -567,14 +570,14 @@ pub mod riyal_contract {
             // Check if enough time has passed since last claim
             require!(
                 current_timestamp >= user_data.next_allowed_claim_time,
-                RiyalError::ClaimTimeLocked
+                MercleError::ClaimTimeLocked
             );
             
             // For first-time claims, allow immediately
             if user_data.total_claims > 0 {
                 require!(
                     current_timestamp >= user_data.last_claim_timestamp.saturating_add(token_state.claim_period_seconds),
-                    RiyalError::ClaimPeriodNotElapsed
+                    MercleError::ClaimPeriodNotElapsed
                 );
             }
         } else {
@@ -582,12 +585,12 @@ pub mod riyal_contract {
             if user_data.last_claim_timestamp > 0 {
                 require!(
                     current_timestamp > user_data.last_claim_timestamp,
-                    RiyalError::ClaimTooSoon
+                    MercleError::ClaimTooSoon
                 );
                 
                 require!(
                     current_timestamp >= user_data.last_claim_timestamp.saturating_add(1),
-                    RiyalError::ClaimTooFrequent
+                    MercleError::ClaimTooFrequent
                 );
             }
         }
@@ -596,37 +599,37 @@ pub mod riyal_contract {
         if user_data.total_claims > 0 {
             require!(
                 payload.nonce == user_data.nonce,
-                RiyalError::InvalidNonceSequence
+                MercleError::InvalidNonceSequence
             );
         }
 
         // CRITICAL SECURITY: Validate expiry timestamp
         require!(
             current_timestamp <= payload.expiry_time,
-            RiyalError::ClaimExpired
+            MercleError::ClaimExpired
         );
         
         // Serialize the payload to create the message that was signed by admin
-        let payload_bytes = payload.try_to_vec().map_err(|_| RiyalError::InvalidClaimPayload)?;
+        let payload_bytes = payload.try_to_vec().map_err(|_| MercleError::InvalidClaimPayload)?;
         
         // Create DOMAIN-SEPARATED MESSAGE with the payload
-        // Format: "RIYAL_CLAIM_V2" | program_id | payload_bytes
+        // Format: "MERCLE_CLAIM_V1" | program_id | payload_bytes
         let mut message_bytes = Vec::new();
-        message_bytes.extend_from_slice(b"RIYAL_CLAIM_V2");
+        message_bytes.extend_from_slice(b"MERCLE_CLAIM_V1");
         message_bytes.extend_from_slice(&crate::ID.to_bytes());
         message_bytes.extend_from_slice(&payload_bytes);
 
         // CRITICAL SECURITY: Verify admin signature format
         require!(
             admin_signature.len() == 64,
-            RiyalError::InvalidAdminSignature
+            MercleError::InvalidAdminSignature
         );
 
         // Verify signature is not empty
         let admin_sig_sum: u64 = admin_signature.iter().map(|&x| x as u64).sum();
         require!(
             admin_sig_sum > 0,
-            RiyalError::InvalidAdminSignature
+            MercleError::InvalidAdminSignature
         );
 
         // ENHANCED SECURITY: Verify only admin signature using Ed25519 program
@@ -678,18 +681,18 @@ pub mod riyal_contract {
         // CRITICAL SECURITY UPDATE: Increment nonce and update security tracking
         let old_nonce = user_data.nonce;
         user_data.nonce = user_data.nonce.checked_add(1)
-            .ok_or(RiyalError::NonceOverflow)?;
+            .ok_or(MercleError::NonceOverflow)?;
         
         // Update timestamp and claim count for additional security tracking
         user_data.last_claim_timestamp = current_timestamp;
         user_data.total_claims = user_data.total_claims.checked_add(1)
-            .ok_or(RiyalError::ClaimCountOverflow)?;
+            .ok_or(MercleError::ClaimCountOverflow)?;
         
         // CRITICAL TIME-LOCK UPDATE: Set next allowed claim time
         if token_state.time_lock_enabled {
             user_data.next_allowed_claim_time = current_timestamp
                 .checked_add(token_state.claim_period_seconds)
-                .ok_or(RiyalError::TimestampOverflow)?;
+                .ok_or(MercleError::TimestampOverflow)?;
         } else {
             // If time-lock disabled, allow next claim after 1 second
             user_data.next_allowed_claim_time = current_timestamp.saturating_add(1);
@@ -718,49 +721,49 @@ pub mod riyal_contract {
         // CRITICAL SECURITY CHECK 1: Verify admin is calling this function
         require!(
             ctx.accounts.admin.key() == token_state.admin,
-            RiyalError::UnauthorizedAdmin
+            MercleError::UnauthorizedAdmin
         );
 
         // CRITICAL SECURITY CHECK 2: Verify contract is initialized
         require!(
             token_state.is_initialized,
-            RiyalError::ContractNotInitialized
+            MercleError::ContractNotInitialized
         );
 
         // CRITICAL SECURITY CHECK 3: Verify token mint has been created
         require!(
             token_state.token_mint != Pubkey::default(),
-            RiyalError::TokenMintNotCreated
+            MercleError::TokenMintNotCreated
         );
 
         // CRITICAL SECURITY CHECK 4: Verify the mint account matches the stored mint
         require!(
             ctx.accounts.mint.key() == token_state.token_mint,
-            RiyalError::InvalidTokenMint
+            MercleError::InvalidTokenMint
         );
 
         // CRITICAL SECURITY CHECK 5: Verify the token account is for the correct mint
         require!(
             ctx.accounts.user_token_account.mint == token_state.token_mint,
-            RiyalError::InvalidTokenAccount
+            MercleError::InvalidTokenAccount
         );
 
         // CRITICAL SECURITY CHECK 6: Verify amount is not zero
         require!(
             amount > 0,
-            RiyalError::InvalidBurnAmount
+            MercleError::InvalidBurnAmount
         );
 
         // CRITICAL SECURITY CHECK 7: Verify user has sufficient balance to burn
         require!(
             ctx.accounts.user_token_account.amount >= amount,
-            RiyalError::InsufficientBalance
+            MercleError::InsufficientBalance
         );
 
         // CRITICAL SECURITY CHECK 8: Verify user is the owner of the token account
         require!(
             ctx.accounts.user_token_account.owner == ctx.accounts.user_authority.key(),
-            RiyalError::UnauthorizedBurn
+            MercleError::UnauthorizedBurn
         );
 
         // Get current timestamp for logging
@@ -798,25 +801,25 @@ pub mod riyal_contract {
         // CRITICAL SECURITY CHECK 1: Verify admin is calling this function
         require!(
             ctx.accounts.admin.key() == token_state.admin,
-            RiyalError::UnauthorizedAdmin
+            MercleError::UnauthorizedAdmin
         );
 
         // CRITICAL SECURITY CHECK 2: Verify contract is initialized
         require!(
             token_state.is_initialized,
-            RiyalError::ContractNotInitialized
+            MercleError::ContractNotInitialized
         );
 
         // CRITICAL SECURITY CHECK 3: Verify token mint has been created
         require!(
             token_state.token_mint != Pubkey::default(),
-            RiyalError::TokenMintNotCreated
+            MercleError::TokenMintNotCreated
         );
 
         // CRITICAL SECURITY CHECK 4: Verify transfers are not already permanently enabled
         require!(
             !token_state.transfers_permanently_enabled,
-            RiyalError::TransfersAlreadyPermanentlyEnabled
+            MercleError::TransfersAlreadyPermanentlyEnabled
         );
 
         // Get current timestamp for logging
@@ -850,37 +853,37 @@ pub mod riyal_contract {
         // CRITICAL SECURITY CHECK 1: Verify contract is initialized
         require!(
             token_state.is_initialized,
-            RiyalError::ContractNotInitialized
+            MercleError::ContractNotInitialized
         );
 
         // CRITICAL SECURITY CHECK 2: Verify token mint has been created
         require!(
             token_state.token_mint != Pubkey::default(),
-            RiyalError::TokenMintNotCreated
+            MercleError::TokenMintNotCreated
         );
 
         // CRITICAL SECURITY CHECK 3: Verify transfers are enabled
         require!(
             token_state.transfers_enabled,
-            RiyalError::TransfersNotEnabled
+            MercleError::TransfersNotEnabled
         );
 
         // CRITICAL SECURITY CHECK 4: Verify the mint account matches the stored mint
         require!(
             ctx.accounts.mint.key() == token_state.token_mint,
-            RiyalError::InvalidTokenMint
+            MercleError::InvalidTokenMint
         );
 
         // CRITICAL SECURITY CHECK 5: Verify the token account is for the correct mint
         require!(
             ctx.accounts.user_token_account.mint == token_state.token_mint,
-            RiyalError::InvalidTokenAccount
+            MercleError::InvalidTokenAccount
         );
 
         // CRITICAL SECURITY CHECK 6: Verify the user owns the token account
         require!(
             ctx.accounts.user_token_account.owner == ctx.accounts.user.key(),
-            RiyalError::UnauthorizedUnfreeze
+            MercleError::UnauthorizedUnfreeze
         );
 
         // Get current timestamp for logging
@@ -898,7 +901,7 @@ pub mod riyal_contract {
         // This prevents temporary unfreezing exploits
         require!(
             token_state.transfers_permanently_enabled,
-            RiyalError::TransfersNotPermanentlyEnabled
+            MercleError::TransfersNotPermanentlyEnabled
         );
 
         // Create PDA signer for unfreezing
@@ -940,54 +943,54 @@ pub mod riyal_contract {
         // CRITICAL SECURITY CHECK 1: Verify contract is initialized
         require!(
             token_state.is_initialized,
-            RiyalError::ContractNotInitialized
+            MercleError::ContractNotInitialized
         );
 
         // CRITICAL SECURITY CHECK 2: Verify token mint has been created
         require!(
             token_state.token_mint != Pubkey::default(),
-            RiyalError::TokenMintNotCreated
+            MercleError::TokenMintNotCreated
         );
 
         // CRITICAL SECURITY CHECK 3: Verify transfers are enabled
         require!(
             token_state.transfers_enabled,
-            RiyalError::TransfersNotEnabled
+            MercleError::TransfersNotEnabled
         );
 
         // CRITICAL SECURITY CHECK 4: Verify the mint account matches the stored mint
         require!(
             ctx.accounts.mint.key() == token_state.token_mint,
-            RiyalError::InvalidTokenMint
+            MercleError::InvalidTokenMint
         );
 
         // CRITICAL SECURITY CHECK 5: Verify both token accounts are for the correct mint
         require!(
             ctx.accounts.from_token_account.mint == token_state.token_mint,
-            RiyalError::InvalidTokenAccount
+            MercleError::InvalidTokenAccount
         );
 
         require!(
             ctx.accounts.to_token_account.mint == token_state.token_mint,
-            RiyalError::InvalidTokenAccount
+            MercleError::InvalidTokenAccount
         );
 
         // CRITICAL SECURITY CHECK 6: Verify amount is not zero
         require!(
             amount > 0,
-            RiyalError::InvalidTransferAmount
+            MercleError::InvalidTransferAmount
         );
 
         // CRITICAL SECURITY CHECK 7: Verify sender has sufficient balance
         require!(
             ctx.accounts.from_token_account.amount >= amount,
-            RiyalError::InsufficientBalance
+            MercleError::InsufficientBalance
         );
 
         // CRITICAL SECURITY CHECK 8: Verify sender is the owner of the from account
         require!(
             ctx.accounts.from_token_account.owner == ctx.accounts.from_authority.key(),
-            RiyalError::UnauthorizedTransfer
+            MercleError::UnauthorizedTransfer
         );
 
         // Get current timestamp for logging
@@ -1028,24 +1031,24 @@ pub mod riyal_contract {
         // CRITICAL SECURITY CHECK 1: Verify admin is calling this function
         require!(
             ctx.accounts.admin.key() == token_state.admin,
-            RiyalError::UnauthorizedAdmin
+            MercleError::UnauthorizedAdmin
         );
 
         // CRITICAL SECURITY CHECK 2: Verify contract is initialized
         require!(
             token_state.is_initialized,
-            RiyalError::ContractNotInitialized
+            MercleError::ContractNotInitialized
         );
 
         // Validate claim period (must be reasonable)
         require!(
             claim_period_seconds >= 3600, // Minimum 1 hour
-            RiyalError::InvalidClaimPeriod
+            MercleError::InvalidClaimPeriod
         );
         
         require!(
             claim_period_seconds <= 31536000, // Maximum 1 year
-            RiyalError::InvalidClaimPeriod
+            MercleError::InvalidClaimPeriod
         );
 
         // Get current timestamp for logging
@@ -1082,19 +1085,19 @@ pub mod riyal_contract {
         // CRITICAL SECURITY CHECK 1: Verify current upgrade authority is calling this function
         require!(
             ctx.accounts.current_upgrade_authority.key() == token_state.upgrade_authority,
-            RiyalError::UnauthorizedUpgradeAuthority
+            MercleError::UnauthorizedUpgradeAuthority
         );
 
         // CRITICAL SECURITY CHECK 2: Verify contract is initialized
         require!(
             token_state.is_initialized,
-            RiyalError::ContractNotInitialized
+            MercleError::ContractNotInitialized
         );
 
         // CRITICAL SECURITY CHECK 3: Verify contract is upgradeable
         require!(
             token_state.upgradeable,
-            RiyalError::ContractNotUpgradeable
+            MercleError::ContractNotUpgradeable
         );
 
         // Get current timestamp for logging
@@ -1134,25 +1137,25 @@ pub mod riyal_contract {
         // CRITICAL SECURITY CHECK 1: Verify upgrade authority is calling this function
         require!(
             ctx.accounts.upgrade_authority.key() == token_state.upgrade_authority,
-            RiyalError::UnauthorizedUpgradeAuthority
+            MercleError::UnauthorizedUpgradeAuthority
         );
 
         // CRITICAL SECURITY CHECK 2: Verify contract is initialized
         require!(
             token_state.is_initialized,
-            RiyalError::ContractNotInitialized
+            MercleError::ContractNotInitialized
         );
 
         // CRITICAL SECURITY CHECK 3: Verify contract is upgradeable
         require!(
             token_state.upgradeable,
-            RiyalError::ContractNotUpgradeable
+            MercleError::ContractNotUpgradeable
         );
 
         // CRITICAL SECURITY CHECK 4: Verify program data account
         require!(
             ctx.accounts.program_data.key() != Pubkey::default(),
-            RiyalError::InvalidProgramData
+            MercleError::InvalidProgramData
         );
 
         // Get current timestamp for logging
@@ -1176,25 +1179,25 @@ pub mod riyal_contract {
         // CRITICAL SECURITY CHECK 1: Verify admin is calling this function
         require!(
             ctx.accounts.admin.key() == token_state.admin,
-            RiyalError::UnauthorizedAdmin
+            MercleError::UnauthorizedAdmin
         );
 
         // CRITICAL SECURITY CHECK 2: Verify contract is initialized
         require!(
             token_state.is_initialized,
-            RiyalError::ContractNotInitialized
+            MercleError::ContractNotInitialized
         );
 
         // CRITICAL SECURITY CHECK 3: Verify token mint has been created
         require!(
             token_state.token_mint != Pubkey::default(),
-            RiyalError::TokenMintNotCreated
+            MercleError::TokenMintNotCreated
         );
 
         // CRITICAL SECURITY CHECK 4: Verify treasury not already created
         require!(
             token_state.treasury_account == Pubkey::default(),
-            RiyalError::TreasuryAlreadyCreated
+            MercleError::TreasuryAlreadyCreated
         );
 
         // Store treasury account
@@ -1224,37 +1227,37 @@ pub mod riyal_contract {
         // CRITICAL SECURITY CHECK 1: Verify admin is calling this function
         require!(
             ctx.accounts.admin.key() == token_state.admin,
-            RiyalError::UnauthorizedAdmin
+            MercleError::UnauthorizedAdmin
         );
 
         // CRITICAL SECURITY CHECK 2: Verify contract is initialized
         require!(
             token_state.is_initialized,
-            RiyalError::ContractNotInitialized
+            MercleError::ContractNotInitialized
         );
 
         // CRITICAL SECURITY CHECK 3: Verify token mint has been created
         require!(
             token_state.token_mint != Pubkey::default(),
-            RiyalError::TokenMintNotCreated
+            MercleError::TokenMintNotCreated
         );
 
         // CRITICAL SECURITY CHECK 4: Verify treasury has been created
         require!(
             token_state.treasury_account != Pubkey::default(),
-            RiyalError::TreasuryNotCreated
+            MercleError::TreasuryNotCreated
         );
 
         // CRITICAL SECURITY CHECK 5: Verify treasury account matches stored account
         require!(
             ctx.accounts.treasury_account.key() == token_state.treasury_account,
-            RiyalError::InvalidTreasuryAccount
+            MercleError::InvalidTreasuryAccount
         );
 
         // CRITICAL SECURITY CHECK 6: Verify amount is not zero
         require!(
             amount > 0,
-            RiyalError::InvalidMintAmount
+            MercleError::InvalidMintAmount
         );
 
         // Create PDA signer for minting
@@ -1301,43 +1304,43 @@ pub mod riyal_contract {
         // CRITICAL SECURITY CHECK 1: Verify admin is calling this function
         require!(
             ctx.accounts.admin.key() == token_state.admin,
-            RiyalError::UnauthorizedAdmin
+            MercleError::UnauthorizedAdmin
         );
 
         // CRITICAL SECURITY CHECK 2: Verify contract is initialized
         require!(
             token_state.is_initialized,
-            RiyalError::ContractNotInitialized
+            MercleError::ContractNotInitialized
         );
 
         // CRITICAL SECURITY CHECK 3: Verify token mint has been created
         require!(
             token_state.token_mint != Pubkey::default(),
-            RiyalError::TokenMintNotCreated
+            MercleError::TokenMintNotCreated
         );
 
         // CRITICAL SECURITY CHECK 4: Verify treasury has been created
         require!(
             token_state.treasury_account != Pubkey::default(),
-            RiyalError::TreasuryNotCreated
+            MercleError::TreasuryNotCreated
         );
 
         // CRITICAL SECURITY CHECK 5: Verify treasury account matches stored account
         require!(
             ctx.accounts.treasury_account.key() == token_state.treasury_account,
-            RiyalError::InvalidTreasuryAccount
+            MercleError::InvalidTreasuryAccount
         );
 
         // CRITICAL SECURITY CHECK 6: Verify amount is not zero
         require!(
             amount > 0,
-            RiyalError::InvalidBurnAmount
+            MercleError::InvalidBurnAmount
         );
 
         // CRITICAL SECURITY CHECK 7: Verify treasury has sufficient balance
         require!(
             ctx.accounts.treasury_account.amount >= amount,
-            RiyalError::InsufficientTreasuryBalance
+            MercleError::InsufficientTreasuryBalance
         );
 
         // Create PDA signer for burning from treasury
@@ -1405,7 +1408,7 @@ pub struct UpdateTimeLock<'info> {
     pub token_state: Account<'info, TokenState>,
     
     #[account(
-        constraint = admin.key() == token_state.admin @ RiyalError::UnauthorizedAdmin
+        constraint = admin.key() == token_state.admin @ MercleError::UnauthorizedAdmin
     )]
     pub admin: Signer<'info>,
 }
@@ -1420,7 +1423,7 @@ pub struct SetUpgradeAuthority<'info> {
     pub token_state: Account<'info, TokenState>,
     
     #[account(
-        constraint = current_upgrade_authority.key() == token_state.upgrade_authority @ RiyalError::UnauthorizedUpgradeAuthority
+        constraint = current_upgrade_authority.key() == token_state.upgrade_authority @ MercleError::UnauthorizedUpgradeAuthority
     )]
     pub current_upgrade_authority: Signer<'info>,
 }
@@ -1434,7 +1437,7 @@ pub struct ValidateUpgrade<'info> {
     pub token_state: Account<'info, TokenState>,
     
     #[account(
-        constraint = upgrade_authority.key() == token_state.upgrade_authority @ RiyalError::UnauthorizedUpgradeAuthority
+        constraint = upgrade_authority.key() == token_state.upgrade_authority @ MercleError::UnauthorizedUpgradeAuthority
     )]
     pub upgrade_authority: Signer<'info>,
     
@@ -1457,7 +1460,7 @@ pub struct UpdateTokenMint<'info> {
     pub token_state: Account<'info, TokenState>,
     
     #[account(
-        constraint = mint.mint_authority == COption::Some(token_state.key()) @ RiyalError::InvalidTokenMint
+        constraint = mint.mint_authority == COption::Some(token_state.key()) @ MercleError::InvalidTokenMint
     )]
     pub mint: Account<'info, Mint>,
     
@@ -1506,19 +1509,19 @@ pub struct MintTokens<'info> {
     
     #[account(
         mut,
-        constraint = mint.key() == token_state.token_mint @ RiyalError::InvalidTokenMint
+        constraint = mint.key() == token_state.token_mint @ MercleError::InvalidTokenMint
     )]
     pub mint: Account<'info, Mint>,
     
     #[account(
         mut,
-        constraint = user_token_account.mint == token_state.token_mint @ RiyalError::InvalidTokenAccount
+        constraint = user_token_account.mint == token_state.token_mint @ MercleError::InvalidTokenAccount
     )]
     pub user_token_account: Account<'info, TokenAccount>,
     
     #[account(
         mut,
-        constraint = admin.key() == token_state.admin @ RiyalError::UnauthorizedAdmin
+        constraint = admin.key() == token_state.admin @ MercleError::UnauthorizedAdmin
     )]
     pub admin: Signer<'info>,
     
@@ -1536,19 +1539,19 @@ pub struct FreezeTokenAccount<'info> {
     
     #[account(
         mut,
-        constraint = mint.key() == token_state.token_mint @ RiyalError::InvalidTokenMint
+        constraint = mint.key() == token_state.token_mint @ MercleError::InvalidTokenMint
     )]
     pub mint: Account<'info, Mint>,
     
     #[account(
         mut,
-        constraint = token_account.mint == token_state.token_mint @ RiyalError::InvalidTokenAccount
+        constraint = token_account.mint == token_state.token_mint @ MercleError::InvalidTokenAccount
     )]
     pub token_account: Account<'info, TokenAccount>,
     
     #[account(
         mut,
-        constraint = admin.key() == token_state.admin @ RiyalError::UnauthorizedAdmin
+        constraint = admin.key() == token_state.admin @ MercleError::UnauthorizedAdmin
     )]
     pub admin: Signer<'info>,
     
@@ -1566,19 +1569,19 @@ pub struct UnfreezeTokenAccount<'info> {
     
     #[account(
         mut,
-        constraint = mint.key() == token_state.token_mint @ RiyalError::InvalidTokenMint
+        constraint = mint.key() == token_state.token_mint @ MercleError::InvalidTokenMint
     )]
     pub mint: Account<'info, Mint>,
     
     #[account(
         mut,
-        constraint = token_account.mint == token_state.token_mint @ RiyalError::InvalidTokenAccount
+        constraint = token_account.mint == token_state.token_mint @ MercleError::InvalidTokenAccount
     )]
     pub token_account: Account<'info, TokenAccount>,
     
     #[account(
         mut,
-        constraint = admin.key() == token_state.admin @ RiyalError::UnauthorizedAdmin
+        constraint = admin.key() == token_state.admin @ MercleError::UnauthorizedAdmin
     )]
     pub admin: Signer<'info>,
     
@@ -1620,13 +1623,13 @@ pub struct ClaimTokens<'info> {
 
     #[account(
         mut,
-        constraint = mint.key() == token_state.token_mint @ RiyalError::InvalidTokenMint
+        constraint = mint.key() == token_state.token_mint @ MercleError::InvalidTokenMint
     )]
     pub mint: Account<'info, Mint>,
 
     #[account(
         mut,
-        constraint = user_token_account.mint == token_state.token_mint @ RiyalError::InvalidTokenAccount
+        constraint = user_token_account.mint == token_state.token_mint @ MercleError::InvalidTokenAccount
     )]
     pub user_token_account: Account<'info, TokenAccount>,
 
@@ -1650,23 +1653,23 @@ pub struct BurnTokens<'info> {
     
     #[account(
         mut,
-        constraint = mint.key() == token_state.token_mint @ RiyalError::InvalidTokenMint
+        constraint = mint.key() == token_state.token_mint @ MercleError::InvalidTokenMint
     )]
     pub mint: Account<'info, Mint>,
     
     #[account(
         mut,
-        constraint = user_token_account.mint == token_state.token_mint @ RiyalError::InvalidTokenAccount
+        constraint = user_token_account.mint == token_state.token_mint @ MercleError::InvalidTokenAccount
     )]
     pub user_token_account: Account<'info, TokenAccount>,
     
     #[account(
-        constraint = admin.key() == token_state.admin @ RiyalError::UnauthorizedAdmin
+        constraint = admin.key() == token_state.admin @ MercleError::UnauthorizedAdmin
     )]
     pub admin: Signer<'info>,
     
     #[account(
-        constraint = user_authority.key() == user_token_account.owner @ RiyalError::UnauthorizedBurn
+        constraint = user_authority.key() == user_token_account.owner @ MercleError::UnauthorizedBurn
     )]
     pub user_authority: Signer<'info>,
     
@@ -1683,7 +1686,7 @@ pub struct EnableTransfers<'info> {
     pub token_state: Account<'info, TokenState>,
     
     #[account(
-        constraint = admin.key() == token_state.admin @ RiyalError::UnauthorizedAdmin
+        constraint = admin.key() == token_state.admin @ MercleError::UnauthorizedAdmin
     )]
     pub admin: Signer<'info>,
 }
@@ -1697,18 +1700,18 @@ pub struct UnfreezeAccount<'info> {
     pub token_state: Account<'info, TokenState>,
     
     #[account(
-        constraint = mint.key() == token_state.token_mint @ RiyalError::InvalidTokenMint
+        constraint = mint.key() == token_state.token_mint @ MercleError::InvalidTokenMint
     )]
     pub mint: Account<'info, Mint>,
     
     #[account(
         mut,
-        constraint = user_token_account.mint == token_state.token_mint @ RiyalError::InvalidTokenAccount
+        constraint = user_token_account.mint == token_state.token_mint @ MercleError::InvalidTokenAccount
     )]
     pub user_token_account: Account<'info, TokenAccount>,
     
     #[account(
-        constraint = user.key() == user_token_account.owner @ RiyalError::UnauthorizedUnfreeze
+        constraint = user.key() == user_token_account.owner @ MercleError::UnauthorizedUnfreeze
     )]
     pub user: Signer<'info>,
     
@@ -1724,24 +1727,24 @@ pub struct TransferTokens<'info> {
     pub token_state: Account<'info, TokenState>,
     
     #[account(
-        constraint = mint.key() == token_state.token_mint @ RiyalError::InvalidTokenMint
+        constraint = mint.key() == token_state.token_mint @ MercleError::InvalidTokenMint
     )]
     pub mint: Account<'info, Mint>,
     
     #[account(
         mut,
-        constraint = from_token_account.mint == token_state.token_mint @ RiyalError::InvalidTokenAccount
+        constraint = from_token_account.mint == token_state.token_mint @ MercleError::InvalidTokenAccount
     )]
     pub from_token_account: Account<'info, TokenAccount>,
     
     #[account(
         mut,
-        constraint = to_token_account.mint == token_state.token_mint @ RiyalError::InvalidTokenAccount
+        constraint = to_token_account.mint == token_state.token_mint @ MercleError::InvalidTokenAccount
     )]
     pub to_token_account: Account<'info, TokenAccount>,
     
     #[account(
-        constraint = from_authority.key() == from_token_account.owner @ RiyalError::UnauthorizedTransfer
+        constraint = from_authority.key() == from_token_account.owner @ MercleError::UnauthorizedTransfer
     )]
     pub from_authority: Signer<'info>,
     
@@ -1767,13 +1770,13 @@ pub struct CreateTreasury<'info> {
     pub treasury_account: Account<'info, TokenAccount>,
     
     #[account(
-        constraint = mint.key() == token_state.token_mint @ RiyalError::InvalidTokenMint
+        constraint = mint.key() == token_state.token_mint @ MercleError::InvalidTokenMint
     )]
     pub mint: Account<'info, Mint>,
     
     #[account(
         mut,
-        constraint = admin.key() == token_state.admin @ RiyalError::UnauthorizedAdmin
+        constraint = admin.key() == token_state.admin @ MercleError::UnauthorizedAdmin
     )]
     pub admin: Signer<'info>,
     
@@ -1793,18 +1796,18 @@ pub struct MintToTreasury<'info> {
     
     #[account(
         mut,
-        constraint = mint.key() == token_state.token_mint @ RiyalError::InvalidTokenMint
+        constraint = mint.key() == token_state.token_mint @ MercleError::InvalidTokenMint
     )]
     pub mint: Account<'info, Mint>,
     
     #[account(
         mut,
-        constraint = treasury_account.key() == token_state.treasury_account @ RiyalError::InvalidTreasuryAccount
+        constraint = treasury_account.key() == token_state.treasury_account @ MercleError::InvalidTreasuryAccount
     )]
     pub treasury_account: Account<'info, TokenAccount>,
     
     #[account(
-        constraint = admin.key() == token_state.admin @ RiyalError::UnauthorizedAdmin
+        constraint = admin.key() == token_state.admin @ MercleError::UnauthorizedAdmin
     )]
     pub admin: Signer<'info>,
     
@@ -1821,18 +1824,18 @@ pub struct BurnFromTreasury<'info> {
     
     #[account(
         mut,
-        constraint = mint.key() == token_state.token_mint @ RiyalError::InvalidTokenMint
+        constraint = mint.key() == token_state.token_mint @ MercleError::InvalidTokenMint
     )]
     pub mint: Account<'info, Mint>,
     
     #[account(
         mut,
-        constraint = treasury_account.key() == token_state.treasury_account @ RiyalError::InvalidTreasuryAccount
+        constraint = treasury_account.key() == token_state.treasury_account @ MercleError::InvalidTreasuryAccount
     )]
     pub treasury_account: Account<'info, TokenAccount>,
     
     #[account(
-        constraint = admin.key() == token_state.admin @ RiyalError::UnauthorizedAdmin
+        constraint = admin.key() == token_state.admin @ MercleError::UnauthorizedAdmin
     )]
     pub admin: Signer<'info>,
     
@@ -1858,7 +1861,7 @@ pub struct PauseTransfers<'info> {
     pub token_state: Account<'info, TokenState>,
     
     #[account(
-        constraint = admin.key() == token_state.admin @ RiyalError::UnauthorizedAdmin
+        constraint = admin.key() == token_state.admin @ MercleError::UnauthorizedAdmin
     )]
     pub admin: Signer<'info>,
 }
@@ -1873,7 +1876,7 @@ pub struct ResumeTransfers<'info> {
     pub token_state: Account<'info, TokenState>,
     
     #[account(
-        constraint = admin.key() == token_state.admin @ RiyalError::UnauthorizedAdmin
+        constraint = admin.key() == token_state.admin @ MercleError::UnauthorizedAdmin
     )]
     pub admin: Signer<'info>,
 }
@@ -1888,7 +1891,7 @@ pub struct PermanentlyEnableTransfers<'info> {
     pub token_state: Account<'info, TokenState>,
     
     #[account(
-        constraint = admin.key() == token_state.admin @ RiyalError::UnauthorizedAdmin
+        constraint = admin.key() == token_state.admin @ MercleError::UnauthorizedAdmin
     )]
     pub admin: Signer<'info>,
 }

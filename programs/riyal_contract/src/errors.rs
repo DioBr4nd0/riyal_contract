@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 
 #[error_code]
-pub enum RiyalError {
+pub enum MercleError {
     #[msg("Unauthorized admin access")]
     UnauthorizedAdmin,
     

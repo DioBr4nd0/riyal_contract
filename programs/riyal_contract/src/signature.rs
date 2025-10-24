@@ -1,9 +1,11 @@
+#![allow(unused_imports)]
+
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::{
     ed25519_program,
     sysvar::instructions::{self, load_instruction_at_checked},
 };
-use crate::errors::*;
+use crate::errors::MercleError;
 
 /// Verify admin Ed25519 signature only using proper Solana method with domain-separated binary messages
 /// This requires an Ed25519 verify instruction to be included BEFORE the claim instruction
@@ -84,7 +86,7 @@ pub fn verify_admin_signature_only(
     // Require admin signature to be verified by Ed25519 program
     require!(
         admin_verified,
-        RiyalError::AdminSignatureNotVerified
+        MercleError::AdminSignatureNotVerified
     );
     
     msg!(

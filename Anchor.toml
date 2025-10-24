@@ -6,10 +6,10 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-riyal_contract = "DUALvp1DCViwVuWYPF66uPcdwiGXXLSW1pPXcAei3ihK"
+mercle_token = "DUALvp1DCViwVuWYPF66uPcdwiGXXLSW1pPXcAei3ihK"
 
 [programs.devnet]
-riyal_contract = "DUALvp1DCViwVuWYPF66uPcdwiGXXLSW1pPXcAei3ihK"
+mercle_token = "DUALvp1DCViwVuWYPF66uPcdwiGXXLSW1pPXcAei3ihK"
 
 [registry]
 url = "https://api.apr.dev"
