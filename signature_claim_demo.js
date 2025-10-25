@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 
 /**
- * RIYAL TOKEN CLAIM SCRIPT
+ * MERCLE TOKEN CLAIM SCRIPT
  * 
- * General-purpose script for claiming tokens with signature verification.
- * Configure the variables below and run to claim tokens for any user.
+ * Simple script to claim tokens with admin signature verification.
+ * Creates signed message, signs with admin, and submits claim transaction.
  * 
  * USAGE:
- * 1. Set the claimer's public/private key
- * 2. Set the admin's private key path or array
- * 3. Configure claim amount and other parameters
- * 4. Run: node claim-tokens.js
+ * 1. Configure the claimer and admin keys below
+ * 2. Set claim amount and parameters
+ * 3. Run: node signature_claim_demo.js
+ * 4. Single clean transaction execution
  */
 
 const anchor = require("@coral-xyz/anchor");
@@ -23,7 +23,7 @@ const {
   Ed25519Program 
 } = require("@solana/web3.js");
 const { 
-  TOKEN_2022_PROGRAM_ID,
+  TOKEN_PROGRAM_ID,
   getAssociatedTokenAddress,
   createAssociatedTokenAccountInstruction,
 } = require("@solana/spl-token");
@@ -35,16 +35,14 @@ const fs = require('fs');
 // ========================================
 
 // Claimer's keypair (the user receiving tokens)
-// const CLAIMER_PUBLIC_KEY = "PASTE_CLAIMER_PUBLIC_KEY_HERE";
 const CLAIMER_PRIVATE_KEY = [110,67,129,81,146,208,14,255,148,122,11,99,153,236,59,6,230,18,81,60,74,204,141,225,255,217,5,128,202,131,23,255,177,246,100,202,146,216,58,133,198,66,182,227,93,211,230,195,31,81,219,194,159,123,82,2,245,2,117,169,200,115,61,34];
 
 // Admin's private key (can be file path or array)
-const ADMIN_KEY_SOURCE = "/Users/mercle/.config/solana/id.json"; // or use array: [1,2,3,...]
+const ADMIN_KEY_SOURCE = "/Users/mercle/.config/solana/id.json";
 
 // Claim parameters
 const CLAIM_AMOUNT_TOKENS = 100; // Amount in tokens (will be converted to base units)
 const CLAIM_EXPIRY_MINUTES = 5;  // How long the claim is valid for
-const NONCE = 1; // Set the nonce (usually get from user data first)
 
 // Network
 const RPC_URL = "https://api.devnet.solana.com";
@@ -76,9 +74,6 @@ function loadAdminKeypair() {
 
 // Load claimer keypair from configuration
 function loadClaimerKeypair() {
-  // if (!CLAIMER_PUBLIC_KEY || !CLAIMER_PRIVATE_KEY.length) {
-  //   throw new Error("Please configure CLAIMER_PUBLIC_KEY and CLAIMER_PRIVATE_KEY");
-  // }
   return Keypair.fromSecretKey(new Uint8Array(CLAIMER_PRIVATE_KEY));
 }
 
@@ -110,9 +105,9 @@ function createDomainSeparatedMessage(programId, payload) {
   const payloadBytes = serializeClaimPayload(payload);
   
   return Buffer.concat([
-    Buffer.from("RIYAL_CLAIM_V2", 'utf8'), // Domain separator
-    programId.toBuffer(),                   // Program ID
-    payloadBytes                           // Serialized payload
+    Buffer.from("MERCLE_CLAIM_V1", 'utf8'), // Domain separator
+    programId.toBuffer(),                    // Program ID
+    payloadBytes                            // Serialized payload
   ]);
 }
 
@@ -151,7 +146,7 @@ async function ensureClaimerFunding(connection, claimer, admin) {
 // ========================================
 
 (async () => {
-  console.log("🎯 RIYAL TOKEN CLAIM EXECUTION");
+  console.log("🎯 MERCLE TOKEN CLAIM EXECUTION");
   console.log("==============================");
   console.log("");
   
@@ -171,7 +166,7 @@ async function ensureClaimerFunding(connection, claimer, admin) {
     anchor.setProvider(provider);
     
     // Load the program
-    const program = anchor.workspace.RiyalContract;
+    const program = anchor.workspace.MercleToken;
     const programId = program.programId;
     
     console.log(`📋 CONTRACT:`);
@@ -222,7 +217,7 @@ async function ensureClaimerFunding(connection, claimer, admin) {
       tokenState.tokenMint, 
       claimer.publicKey,
       false,
-      TOKEN_2022_PROGRAM_ID
+      TOKEN_PROGRAM_ID
     );
     
     // Create token account if needed
@@ -237,7 +232,7 @@ async function ensureClaimerFunding(connection, claimer, admin) {
           claimerTokenAccount,
           claimer.publicKey,
           tokenState.tokenMint,
-          TOKEN_2022_PROGRAM_ID
+          TOKEN_PROGRAM_ID
         )
       );
       createATATx.feePayer = admin.publicKey;
@@ -252,7 +247,7 @@ async function ensureClaimerFunding(connection, claimer, admin) {
     const currentTime = Math.floor(Date.now() / 1000);
     const claimAmount = CLAIM_AMOUNT_TOKENS * Math.pow(10, 9); // Convert to base units (9 decimals)
     const expiryTime = currentTime + (CLAIM_EXPIRY_MINUTES * 60);
-    const nonce = NONCE; // Use configured nonce
+    const nonce = userData.nonce.toNumber(); // Use current nonce from user data
     
     const claimPayload = {
       userAddress: claimer.publicKey,
@@ -300,7 +295,7 @@ async function ensureClaimerFunding(connection, claimer, admin) {
         userTokenAccount: claimerTokenAccount,
         user: claimer.publicKey,
         instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
-        tokenProgram: TOKEN_2022_PROGRAM_ID,
+        tokenProgram: TOKEN_PROGRAM_ID,
       })
       .instruction();
     

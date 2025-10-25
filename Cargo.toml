@@ -4,6 +4,9 @@ members = [
 ]
 resolver = "2"
 
+[workspace.dependencies]
+solana-program = "=1.17.34"
+
 [profile.release]
 overflow-checks = true
 lto = "fat"
