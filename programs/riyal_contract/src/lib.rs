@@ -1,23 +1,18 @@
-#![allow(unexpected_cfgs)]
-#![allow(deprecated)]
-
 use anchor_lang::prelude::*;
-use anchor_spl::token::{Token, Mint, TokenAccount, freeze_account, thaw_account, FreezeAccount, ThawAccount, mint_to, burn, transfer, MintTo, Burn, Transfer};
+use anchor_spl::token::{Token, Mint, TokenAccount, freeze_account, thaw_account, FreezeAccount, ThawAccount, mint_to, burn, transfer, MintTo, Burn, Transfer, set_authority, SetAuthority};
 use anchor_lang::solana_program::program_option::COption;
 use anchor_lang::solana_program::{
     sysvar::instructions::{self},
     sysvar::clock::Clock,
-    account_info::AccountInfo,
 };
 pub mod errors;
 use errors::MercleError;
 pub mod signature;
 use signature::verify_admin_signature_only;
 
-declare_id!("DUALvp1DCViwVuWYPF66uPcdwiGXXLSW1pPXcAei3ihK");
+declare_id!("2XWNXNwRdT9rfKUjsmtwi5St4yaLNDKoHiKiASyn3rLZ");
 
-/// Mercle token claim payload structure that gets signed by admin
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
 pub struct ClaimPayload {
     pub user_address: Pubkey,
     pub claim_amount: u64,
@@ -29,1354 +24,429 @@ pub struct ClaimPayload {
 pub mod mercle_token {
     use super::*;
 
-    /// Initialize the contract with admin public key, time-lock settings, and upgrade authority
-    pub fn initialize(
-        ctx: Context<Initialize>, 
-        admin: Pubkey,
-        upgrade_authority: Pubkey,
-        claim_period_seconds: i64,
-        time_lock_enabled: bool,
-        upgradeable: bool,
-    ) -> Result<()> {
+    pub fn initialize(ctx: Context<Initialize>, admin: Pubkey, upgrade_authority: Pubkey, claim_period_seconds: i64, time_lock_enabled: bool, upgradeable: bool) -> Result<()> {
+        require!(claim_period_seconds >= 30 && claim_period_seconds <= 31536000, MercleError::InvalidClaimPeriod);
+
         let token_state = &mut ctx.accounts.token_state;
-        
-        // Validate claim period (must be reasonable) - allowing shorter periods for testing
-        require!(
-            claim_period_seconds >= 30, // Minimum 30 seconds (for testing)
-            MercleError::InvalidClaimPeriod
-        );
-        
-        require!(
-            claim_period_seconds <= 31536000, // Maximum 1 year
-            MercleError::InvalidClaimPeriod
-        );
-        
         token_state.admin = admin;
         token_state.upgrade_authority = upgrade_authority;
         token_state.is_initialized = true;
-        token_state.token_mint = Pubkey::default(); // Will be set when mint is created
-        token_state.treasury_account = Pubkey::default(); // Will be set when treasury is created
+        token_state.token_mint = Pubkey::default();
+        token_state.treasury_account = Pubkey::default();
         token_state.transfers_enabled = false;
-        token_state.transfers_permanently_enabled = false; // Will be set when transfers enabled
-        token_state.transfer_enable_timestamp = 0; // Will be set when transfers enabled
+        token_state.transfers_permanently_enabled = false;
+        token_state.transfer_enable_timestamp = 0;
         token_state.claim_period_seconds = claim_period_seconds;
         token_state.time_lock_enabled = time_lock_enabled;
         token_state.upgradeable = upgradeable;
         
-        msg!(
-            "Contract initialized - Admin: {}, Upgrade Authority: {}, Claim Period: {}s, Time-lock: {}, Upgradeable: {}",
-            admin,
-            upgrade_authority,
-            claim_period_seconds,
-            time_lock_enabled,
-            upgradeable
-        );
         Ok(())
     }
 
-    /// Create Mercle SPL Token mint (starts with transfers paused)
-    pub fn create_token_mint(
-        ctx: Context<CreateTokenMint>,
-        decimals: u8,
-        name: String,
-        symbol: String,
-    ) -> Result<()> {
+    pub fn create_token_mint(ctx: Context<CreateTokenMint>, _decimals: u8, name: String, symbol: String) -> Result<()> {
         let token_state = &mut ctx.accounts.token_state;
-        
-        // Verify admin is calling this function
-        require!(
-            ctx.accounts.admin.key() == token_state.admin,
-            MercleError::UnauthorizedAdmin
-        );
-
-        // Verify contract is initialized
-        require!(
-            token_state.is_initialized,
-            MercleError::ContractNotInitialized
-        );
-
-        // CRITICAL: Verify token mint hasn't been created already
-        require!(
-            token_state.token_mint == Pubkey::default(),
-            MercleError::TokenMintAlreadyCreated
-        );
-
-        // Store token mint information
         token_state.token_mint = ctx.accounts.mint.key();
-        token_state.token_name = name.clone();
-        token_state.token_symbol = symbol.clone();
-        token_state.decimals = decimals;
-        
-        // Start with transfers DISABLED (paused)
+        token_state.token_name = name;
+        token_state.token_symbol = symbol;
+        token_state.decimals = _decimals;
         token_state.transfers_enabled = false;
 
-        msg!(
-            "Token mint created: {} ({}) with {} decimals, mint authority: {}, transfers: PAUSED",
-            name,
-            symbol,
-            decimals,
-            token_state.admin
-        );
-
         Ok(())
     }
 
-    /// Update token mint (admin only) - for migration purposes
-    pub fn update_token_mint(
-        ctx: Context<UpdateTokenMint>,
-        decimals: u8,
-        name: String,
-        symbol: String,
-    ) -> Result<()> {
+    pub fn update_token_mint(ctx: Context<UpdateTokenMint>, decimals: u8, name: String, symbol: String) -> Result<()> {
         let token_state = &mut ctx.accounts.token_state;
-        
-        // Verify admin is calling this function
-        require!(
-            ctx.accounts.admin.key() == token_state.admin,
-            MercleError::UnauthorizedAdmin
-        );
-
-        // Verify contract is initialized
-        require!(
-            token_state.is_initialized,
-            MercleError::ContractNotInitialized
-        );
-
-        // Store new token mint information
         token_state.token_mint = ctx.accounts.mint.key();
-        token_state.token_name = name.clone();
-        token_state.token_symbol = symbol.clone();
+        token_state.token_name = name;
+        token_state.token_symbol = symbol;
         token_state.decimals = decimals;
-        
-        // Reset treasury account as it needs to be recreated for new mint
         token_state.treasury_account = Pubkey::default();
 
-        msg!(
-            "Token mint UPDATED: {} ({}) with {} decimals, mint authority: {}, OLD MINT REPLACED",
-            name,
-            symbol,
-            decimals,
-            token_state.admin
-        );
-
         Ok(())
     }
 
-    /// Check if transfers are enabled (used by transfer functions)
-    pub fn check_transfers_enabled(ctx: Context<CheckTransfersEnabled>) -> Result<()> {
-        let token_state = &ctx.accounts.token_state;
 
-        // Check if transfers are enabled
-        require!(
-            token_state.transfers_enabled,
-            MercleError::TransfersPaused
-        );
-
-        msg!(
-            "Transfers are enabled: {}",
-            token_state.transfers_enabled
-        );
-
-        Ok(())
-    }
-
-    /// Pause token transfers (admin only)
     pub fn pause_transfers(ctx: Context<PauseTransfers>) -> Result<()> {
-        let token_state = &mut ctx.accounts.token_state;
-        
-        // Verify admin is calling this function
-        require!(
-            ctx.accounts.admin.key() == token_state.admin,
-            MercleError::UnauthorizedAdmin
-        );
-
-        // Verify contract is initialized
-        require!(
-            token_state.is_initialized,
-            MercleError::ContractNotInitialized
-        );
-
-        // Check if transfers are permanently enabled (cannot be paused)
-        require!(
-            !token_state.transfers_permanently_enabled,
-            MercleError::TransfersPermanentlyEnabled
-        );
-
-        token_state.transfers_enabled = false;
-
-        msg!(
-            "TRANSFERS PAUSED by admin: {}",
-            ctx.accounts.admin.key()
-        );
-
+        require!(!ctx.accounts.token_state.transfers_permanently_enabled, MercleError::TransfersPermanentlyEnabled);
+        ctx.accounts.token_state.transfers_enabled = false;
         Ok(())
     }
 
-    /// Resume token transfers (admin only)
     pub fn resume_transfers(ctx: Context<ResumeTransfers>) -> Result<()> {
-        let token_state = &mut ctx.accounts.token_state;
-        
-        // Verify admin is calling this function
-        require!(
-            ctx.accounts.admin.key() == token_state.admin,
-            MercleError::UnauthorizedAdmin
-        );
-
-        // Verify contract is initialized
-        require!(
-            token_state.is_initialized,
-            MercleError::ContractNotInitialized
-        );
-
-        token_state.transfers_enabled = true;
-
-        // Get current timestamp
-        let clock = Clock::get()?;
-        token_state.transfer_enable_timestamp = clock.unix_timestamp;
-
-        msg!(
-            "TRANSFERS RESUMED by admin: {} at timestamp: {}",
-            ctx.accounts.admin.key(),
-            clock.unix_timestamp
-        );
-
+        ctx.accounts.token_state.transfers_enabled = true;
+        ctx.accounts.token_state.transfer_enable_timestamp = Clock::get()?.unix_timestamp;
         Ok(())
     }
 
-    /// Permanently enable transfers (admin only) - cannot be undone
     pub fn permanently_enable_transfers(ctx: Context<PermanentlyEnableTransfers>) -> Result<()> {
-        let token_state = &mut ctx.accounts.token_state;
-        
-        // Verify admin is calling this function
-        require!(
-            ctx.accounts.admin.key() == token_state.admin,
-            MercleError::UnauthorizedAdmin
-        );
-
-        // Verify contract is initialized
-        require!(
-            token_state.is_initialized,
-            MercleError::ContractNotInitialized
-        );
-
-        token_state.transfers_enabled = true;
-        token_state.transfers_permanently_enabled = true;
-
-        // Get current timestamp
-        let clock = Clock::get()?;
-        token_state.transfer_enable_timestamp = clock.unix_timestamp;
-
-        msg!(
-            "TRANSFERS PERMANENTLY ENABLED by admin: {} at timestamp: {} - CANNOT BE REVERSED",
-            ctx.accounts.admin.key(),
-            clock.unix_timestamp
-        );
-
+        let s = &mut ctx.accounts.token_state;
+        s.transfers_enabled = true;
+        s.transfers_permanently_enabled = true;
+        s.transfer_enable_timestamp = Clock::get()?.unix_timestamp;
         Ok(())
     }
 
-    /// Mint tokens to a user's token account (admin only)
-    pub fn mint_tokens(
-        ctx: Context<MintTokens>,
-        amount: u64,
-    ) -> Result<()> {
-        let token_state = &ctx.accounts.token_state;
-        
-        // Verify admin is calling this function
-        require!(
-            ctx.accounts.admin.key() == token_state.admin,
-            MercleError::UnauthorizedAdmin
-        );
+    pub fn mint_tokens(ctx: Context<MintTokens>, amount: u64) -> Result<()> {
+        require!(amount > 0, MercleError::InvalidMintAmount);
 
-        // Verify contract is initialized
-        require!(
-            token_state.is_initialized,
-            MercleError::ContractNotInitialized
-        );
-
-        // Verify token mint has been created
-        require!(
-            token_state.token_mint != Pubkey::default(),
-            MercleError::TokenMintNotCreated
-        );
-
-        // Verify the mint account matches the stored mint
-        require!(
-            ctx.accounts.mint.key() == token_state.token_mint,
-            MercleError::InvalidTokenMint
-        );
-
-        // Verify the token account is for the correct mint
-        require!(
-            ctx.accounts.user_token_account.mint == token_state.token_mint,
-            MercleError::InvalidTokenAccount
-        );
-
-        // Verify amount is not zero
-        require!(
-            amount > 0,
-            MercleError::InvalidMintAmount
-        );
-
-        // Create PDA signer for minting
-        let seeds = &[
-            b"token_state".as_ref(),
-            &[ctx.bumps.token_state],
-        ];
-        let signer_seeds = &[&seeds[..]];
-
-        // Create CPI context for minting with PDA as authority
-        let cpi_accounts = MintTo {
+        let seeds = &[b"token_state".as_ref(), &[ctx.bumps.token_state]];
+        mint_to(CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            MintTo {
             mint: ctx.accounts.mint.to_account_info(),
             to: ctx.accounts.user_token_account.to_account_info(),
             authority: ctx.accounts.token_state.to_account_info(),
-        };
-        let cpi_program = ctx.accounts.token_program.to_account_info();
-        let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
+            },
+            &[&seeds[..]],
+        ), amount)?;
 
-        // Mint tokens
-        mint_to(cpi_ctx, amount)?;
-
-        // AUTO-FREEZE: Immediately freeze the token account after minting
-        let freeze_seeds = &[
-            b"token_state".as_ref(),
-            &[ctx.bumps.token_state],
-        ];
-        let freeze_signer_seeds = &[&freeze_seeds[..]];
-
-        let freeze_cpi_accounts = FreezeAccount {
+        freeze_account(CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            FreezeAccount {
             account: ctx.accounts.user_token_account.to_account_info(),
             mint: ctx.accounts.mint.to_account_info(),
             authority: ctx.accounts.token_state.to_account_info(),
-        };
-        let freeze_cpi_program = ctx.accounts.token_program.to_account_info();
-        let freeze_cpi_ctx = CpiContext::new_with_signer(freeze_cpi_program, freeze_cpi_accounts, freeze_signer_seeds);
-
-        // Freeze the account immediately after minting
-        freeze_account(freeze_cpi_ctx)?;
-
-        msg!(
-            "Minted {} tokens to user account: {} by admin: {} - ACCOUNT IMMEDIATELY FROZEN",
-            amount,
-            ctx.accounts.user_token_account.key(),
-            ctx.accounts.admin.key()
-        );
+            },
+            &[&seeds[..]],
+        ))?;
 
         Ok(())
     }
 
-    /// Freeze a user's token account (admin only) - prevents all transfers
     pub fn freeze_token_account(ctx: Context<FreezeTokenAccount>) -> Result<()> {
-        let token_state = &ctx.accounts.token_state;
-        
-        // Verify admin is calling this function
-        require!(
-            ctx.accounts.admin.key() == token_state.admin,
-            MercleError::UnauthorizedAdmin
-        );
-
-        // Verify contract is initialized
-        require!(
-            token_state.is_initialized,
-            MercleError::ContractNotInitialized
-        );
-
-        // Verify the mint matches
-        require!(
-            ctx.accounts.mint.key() == token_state.token_mint,
-            MercleError::InvalidTokenMint
-        );
-
-        // Verify the token account belongs to this mint
-        require!(
-            ctx.accounts.token_account.mint == token_state.token_mint,
-            MercleError::InvalidTokenAccount
-        );
-
-        // Create signer seeds for PDA authority
-        let seeds = &[
-            b"token_state".as_ref(),
-            &[ctx.bumps.token_state],
-        ];
-        let signer_seeds = &[&seeds[..]];
-
-        // Create CPI context for freezing
-        let cpi_accounts = FreezeAccount {
+        let seeds = &[b"token_state".as_ref(), &[ctx.bumps.token_state]];
+        freeze_account(CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            FreezeAccount {
             account: ctx.accounts.token_account.to_account_info(),
             mint: ctx.accounts.mint.to_account_info(),
             authority: ctx.accounts.token_state.to_account_info(),
-        };
-        let cpi_program = ctx.accounts.token_program.to_account_info();
-        let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
-
-        // Freeze the account
-        freeze_account(cpi_ctx)?;
-
-        msg!(
-            "Token account {} FROZEN by admin: {} - NO TRANSFERS ALLOWED",
-            ctx.accounts.token_account.key(),
-            ctx.accounts.admin.key()
-        );
-
+            },
+            &[&seeds[..]],
+        ))?;
         Ok(())
     }
 
-    /// Unfreeze a user's token account (admin only) - allows transfers again
     pub fn unfreeze_token_account(ctx: Context<UnfreezeTokenAccount>) -> Result<()> {
-        let token_state = &ctx.accounts.token_state;
-        
-        // Verify admin is calling this function
-        require!(
-            ctx.accounts.admin.key() == token_state.admin,
-            MercleError::UnauthorizedAdmin
-        );
-
-        // Verify contract is initialized
-        require!(
-            token_state.is_initialized,
-            MercleError::ContractNotInitialized
-        );
-
-        // Verify the mint matches
-        require!(
-            ctx.accounts.mint.key() == token_state.token_mint,
-            MercleError::InvalidTokenMint
-        );
-
-        // Verify the token account belongs to this mint
-        require!(
-            ctx.accounts.token_account.mint == token_state.token_mint,
-            MercleError::InvalidTokenAccount
-        );
-
-        // Create signer seeds for PDA authority
-        let seeds = &[
-            b"token_state".as_ref(),
-            &[ctx.bumps.token_state],
-        ];
-        let signer_seeds = &[&seeds[..]];
-
-        // Create CPI context for thawing (unfreezing)
-        let cpi_accounts = ThawAccount {
+        let seeds = &[b"token_state".as_ref(), &[ctx.bumps.token_state]];
+        thaw_account(CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            ThawAccount {
             account: ctx.accounts.token_account.to_account_info(),
             mint: ctx.accounts.mint.to_account_info(),
             authority: ctx.accounts.token_state.to_account_info(),
-        };
-        let cpi_program = ctx.accounts.token_program.to_account_info();
-        let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
-
-        // Unfreeze the account
-        thaw_account(cpi_ctx)?;
-
-        msg!(
-            "Token account {} UNFROZEN by admin: {} - TRANSFERS NOW ALLOWED",
-            ctx.accounts.token_account.key(),
-            ctx.accounts.admin.key()
-        );
-
+            },
+            &[&seeds[..]],
+        ))?;
         Ok(())
     }
 
-    /// Initialize user data PDA with nonce and security tracking
     pub fn initialize_user_data(ctx: Context<InitializeUserData>) -> Result<()> {
-        let user_data = &mut ctx.accounts.user_data;
-        let clock = Clock::get()?;
-        
-        user_data.user = ctx.accounts.user.key();
-        user_data.nonce = 0;
-        user_data.last_claim_timestamp = 0; // No claims yet
-        user_data.next_allowed_claim_time = 0; // Can claim immediately on first attempt
-        user_data.total_claims = 0;
-        user_data.bump = ctx.bumps.user_data;
-
-        msg!(
-            "User data initialized for user: {} with nonce: {} at timestamp: {}, next claim allowed immediately",
-            user_data.user,
-            user_data.nonce,
-            clock.unix_timestamp
-        );
-
+        let d = &mut ctx.accounts.user_data;
+        d.user = ctx.accounts.user.key();
+        d.nonce = 0;
+        d.last_claim_timestamp = 0;
+        d.next_allowed_claim_time = 0;
+        d.total_claims = 0;
+        d.bump = ctx.bumps.user_data;
         Ok(())
     }
 
-    /// Claim tokens using admin-signed payload with user verification
-    pub fn claim_tokens(
-        ctx: Context<ClaimTokens>,
-        payload: ClaimPayload,
-        admin_signature: [u8; 64],
-    ) -> Result<()> {
+    pub fn claim_tokens(ctx: Context<ClaimTokens>, payload: ClaimPayload, admin_signature: [u8; 64]) -> Result<()> {
         let token_state = &ctx.accounts.token_state;
         let user_data = &mut ctx.accounts.user_data;
-        
-        // Verify contract is initialized
-        require!(
-            token_state.is_initialized,
-            MercleError::ContractNotInitialized
-        );
+        let current_timestamp = Clock::get()?.unix_timestamp;
 
-        // Verify token mint has been created
-        require!(
-            token_state.token_mint != Pubkey::default(),
-            MercleError::TokenMintNotCreated
-        );
+        require!(payload.user_address == ctx.accounts.user.key(), MercleError::UnauthorizedDestination);
+        require!(ctx.accounts.user_token_account.owner == ctx.accounts.user.key(), MercleError::UnauthorizedDestination);
+        require!(payload.claim_amount > 0, MercleError::InvalidMintAmount);
+        require!(payload.nonce == user_data.nonce, MercleError::InvalidNonce);
+        require!(current_timestamp <= payload.expiry_time, MercleError::ClaimExpired);
 
-        // Verify the mint account matches the stored mint
-        require!(
-            ctx.accounts.mint.key() == token_state.token_mint,
-            MercleError::InvalidTokenMint
-        );
-
-        // Verify the token account is for the correct mint
-        require!(
-            ctx.accounts.user_token_account.mint == token_state.token_mint,
-            MercleError::InvalidTokenAccount
-        );
-
-        // CRITICAL: This check should come FIRST
-        require!(
-        payload.user_address == ctx.accounts.user.key(),
-        MercleError::UnauthorizedDestination
-        );
-        // CRITICAL SECURITY: Verify destination binding - user can only claim to their own token account
-        require!(
-            ctx.accounts.user_token_account.owner == ctx.accounts.user.key(),
-            MercleError::UnauthorizedDestination
-        );
-
-        // Verify amount is not zero
-        require!(
-            payload.claim_amount > 0,
-            MercleError::InvalidMintAmount
-        );
-
-        // Get current timestamp for validation
-        let clock = Clock::get()?;
-        let current_timestamp = clock.unix_timestamp;
-
-        // CRITICAL SECURITY CHECK 1: Verify user data belongs to the user
-        require!(
-            user_data.user == ctx.accounts.user.key(),
-            MercleError::InvalidUserData
-        );
-
-        // CRITICAL SECURITY CHECK 2: Verify nonce matches user's current nonce (prevent replay attacks)
-        require!(
-            payload.nonce == user_data.nonce,
-            MercleError::InvalidNonce
-        );
-
-        // CRITICAL SECURITY CHECK 5: TIME-LOCK VALIDATION - enforce claim periods
         if token_state.time_lock_enabled {
-            // Check if enough time has passed since last claim
-            require!(
-                current_timestamp >= user_data.next_allowed_claim_time,
-                MercleError::ClaimTimeLocked
-            );
-            
-            // For first-time claims, allow immediately
+            require!(current_timestamp >= user_data.next_allowed_claim_time, MercleError::ClaimTimeLocked);
             if user_data.total_claims > 0 {
-                require!(
-                    current_timestamp >= user_data.last_claim_timestamp.saturating_add(token_state.claim_period_seconds),
-                    MercleError::ClaimPeriodNotElapsed
-                );
+                require!(current_timestamp >= user_data.last_claim_timestamp.saturating_add(token_state.claim_period_seconds), MercleError::ClaimPeriodNotElapsed);
             }
-        } else {
-            // If time-lock disabled, still enforce minimum 1 second gap
-            if user_data.last_claim_timestamp > 0 {
-                require!(
-                    current_timestamp > user_data.last_claim_timestamp,
-                    MercleError::ClaimTooSoon
-                );
-                
-                require!(
-                    current_timestamp >= user_data.last_claim_timestamp.saturating_add(1),
-                    MercleError::ClaimTooFrequent
-                );
-            }
+        } else if user_data.last_claim_timestamp > 0 {
+            require!(current_timestamp >= user_data.last_claim_timestamp.saturating_add(1), MercleError::ClaimTooFrequent);
         }
 
-        // CRITICAL SECURITY CHECK 6: Validate nonce progression
-        if user_data.total_claims > 0 {
-            require!(
-                payload.nonce == user_data.nonce,
-                MercleError::InvalidNonceSequence
-            );
-        }
-
-        // CRITICAL SECURITY: Validate expiry timestamp
-        require!(
-            current_timestamp <= payload.expiry_time,
-            MercleError::ClaimExpired
-        );
-        
-        // Serialize the payload to create the message that was signed by admin
         let payload_bytes = payload.try_to_vec().map_err(|_| MercleError::InvalidClaimPayload)?;
-        
-        // Create DOMAIN-SEPARATED MESSAGE with the payload
-        // Format: "MERCLE_CLAIM_V1" | program_id | payload_bytes
         let mut message_bytes = Vec::new();
         message_bytes.extend_from_slice(b"MERCLE_CLAIM_V1");
         message_bytes.extend_from_slice(&crate::ID.to_bytes());
         message_bytes.extend_from_slice(&payload_bytes);
 
-        // CRITICAL SECURITY: Verify admin signature format
-        require!(
-            admin_signature.len() == 64,
-            MercleError::InvalidAdminSignature
-        );
-
-        // Verify signature is not empty
         let admin_sig_sum: u64 = admin_signature.iter().map(|&x| x as u64).sum();
-        require!(
-            admin_sig_sum > 0,
-            MercleError::InvalidAdminSignature
-        );
+        require!(admin_sig_sum > 0, MercleError::InvalidAdminSignature);
 
-        // ENHANCED SECURITY: Verify only admin signature using Ed25519 program
-        // This requires an Ed25519 verify instruction to be included in the transaction
-        verify_admin_signature_only(
-            &ctx.accounts.instructions,
-            &message_bytes,
-            &admin_signature,
-            &token_state.admin,
-        )?;
+        verify_admin_signature_only(&ctx.accounts.instructions, &message_bytes, &admin_signature, &token_state.admin)?;
 
-        // Create PDA signer for minting (using token_state as authority)
-        let seeds = &[
-            b"token_state".as_ref(),
-            &[ctx.bumps.token_state],
-        ];
-        let signer_seeds = &[&seeds[..]];
-
-        // Create CPI context for minting with PDA as authority
-        let cpi_accounts = MintTo {
+        let seeds = &[b"token_state".as_ref(), &[ctx.bumps.token_state]];
+        mint_to(CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            MintTo {
             mint: ctx.accounts.mint.to_account_info(),
             to: ctx.accounts.user_token_account.to_account_info(),
             authority: ctx.accounts.token_state.to_account_info(),
-        };
-        let cpi_program = ctx.accounts.token_program.to_account_info();
-        let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
+            },
+            &[&seeds[..]],
+        ), payload.claim_amount)?;
 
-        // Mint tokens first
-        mint_to(cpi_ctx, payload.claim_amount)?;
-
-        // CRITICAL SECURITY: Immediately freeze the account after minting to prevent transfers
-        let freeze_seeds = &[
-            b"token_state".as_ref(),
-            &[ctx.bumps.token_state],
-        ];
-        let freeze_signer_seeds = &[&freeze_seeds[..]];
-
-        let freeze_cpi_accounts = FreezeAccount {
+        freeze_account(CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            FreezeAccount {
             account: ctx.accounts.user_token_account.to_account_info(),
             mint: ctx.accounts.mint.to_account_info(),
             authority: ctx.accounts.token_state.to_account_info(),
-        };
-        let freeze_cpi_program = ctx.accounts.token_program.to_account_info();
-        let freeze_cpi_ctx = CpiContext::new_with_signer(freeze_cpi_program, freeze_cpi_accounts, freeze_signer_seeds);
+            },
+            &[&seeds[..]],
+        ))?;
 
-        // Freeze the account immediately after claiming
-        freeze_account(freeze_cpi_ctx)?;
-
-        // CRITICAL SECURITY UPDATE: Increment nonce and update security tracking
-        let old_nonce = user_data.nonce;
-        user_data.nonce = user_data.nonce.checked_add(1)
-            .ok_or(MercleError::NonceOverflow)?;
-        
-        // Update timestamp and claim count for additional security tracking
+        user_data.nonce = user_data.nonce.checked_add(1).ok_or(MercleError::NonceOverflow)?;
         user_data.last_claim_timestamp = current_timestamp;
-        user_data.total_claims = user_data.total_claims.checked_add(1)
-            .ok_or(MercleError::ClaimCountOverflow)?;
-        
-        // CRITICAL TIME-LOCK UPDATE: Set next allowed claim time
-        if token_state.time_lock_enabled {
-            user_data.next_allowed_claim_time = current_timestamp
-                .checked_add(token_state.claim_period_seconds)
-                .ok_or(MercleError::TimestampOverflow)?;
+        user_data.total_claims = user_data.total_claims.checked_add(1).ok_or(MercleError::ClaimCountOverflow)?;
+        user_data.next_allowed_claim_time = if token_state.time_lock_enabled {
+            current_timestamp.checked_add(token_state.claim_period_seconds).ok_or(MercleError::TimestampOverflow)?
         } else {
-            // If time-lock disabled, allow next claim after 1 second
-            user_data.next_allowed_claim_time = current_timestamp.saturating_add(1);
-        }
-
-        msg!(
-            "CLAIM SUCCESSFUL: User: {}, Amount: {}, Nonce used: {}, New nonce: {}, Timestamp: {}, Total claims: {}",
-            ctx.accounts.user.key(),
-            payload.claim_amount,
-            old_nonce,
-            user_data.nonce,
-            current_timestamp,
-            user_data.total_claims
-        );
+            current_timestamp.saturating_add(1)
+        };
 
         Ok(())
     }
 
-    /// Burn tokens from user's account (admin authorized, user must sign)
-    pub fn burn_tokens(
-        ctx: Context<BurnTokens>,
-        amount: u64,
-    ) -> Result<()> {
-        let token_state = &ctx.accounts.token_state;
-        
-        // CRITICAL SECURITY CHECK 1: Verify admin is calling this function
-        require!(
-            ctx.accounts.admin.key() == token_state.admin,
-            MercleError::UnauthorizedAdmin
-        );
+    pub fn burn_tokens(ctx: Context<BurnTokens>, amount: u64) -> Result<()> {
+        require!(amount > 0, MercleError::InvalidBurnAmount);
+        require!(ctx.accounts.user_token_account.amount >= amount, MercleError::InsufficientBalance);
 
-        // CRITICAL SECURITY CHECK 2: Verify contract is initialized
-        require!(
-            token_state.is_initialized,
-            MercleError::ContractNotInitialized
-        );
-
-        // CRITICAL SECURITY CHECK 3: Verify token mint has been created
-        require!(
-            token_state.token_mint != Pubkey::default(),
-            MercleError::TokenMintNotCreated
-        );
-
-        // CRITICAL SECURITY CHECK 4: Verify the mint account matches the stored mint
-        require!(
-            ctx.accounts.mint.key() == token_state.token_mint,
-            MercleError::InvalidTokenMint
-        );
-
-        // CRITICAL SECURITY CHECK 5: Verify the token account is for the correct mint
-        require!(
-            ctx.accounts.user_token_account.mint == token_state.token_mint,
-            MercleError::InvalidTokenAccount
-        );
-
-        // CRITICAL SECURITY CHECK 6: Verify amount is not zero
-        require!(
-            amount > 0,
-            MercleError::InvalidBurnAmount
-        );
-
-        // CRITICAL SECURITY CHECK 7: Verify user has sufficient balance to burn
-        require!(
-            ctx.accounts.user_token_account.amount >= amount,
-            MercleError::InsufficientBalance
-        );
-
-        // CRITICAL SECURITY CHECK 8: Verify user is the owner of the token account
-        require!(
-            ctx.accounts.user_token_account.owner == ctx.accounts.user_authority.key(),
-            MercleError::UnauthorizedBurn
-        );
-
-        // Get current timestamp for logging
-        let clock = Clock::get()?;
-        let current_timestamp = clock.unix_timestamp;
-
-        // Create CPI context for burning tokens (user must sign as owner)
-        let cpi_accounts = Burn {
+        burn(CpiContext::new(
+            ctx.accounts.token_program.to_account_info(),
+            Burn {
             mint: ctx.accounts.mint.to_account_info(),
             from: ctx.accounts.user_token_account.to_account_info(),
             authority: ctx.accounts.user_authority.to_account_info(),
-        };
-        let cpi_program = ctx.accounts.token_program.to_account_info();
-        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
-
-        // Burn tokens
-        burn(cpi_ctx, amount)?;
-
-        msg!(
-            "BURN SUCCESSFUL: Admin: {}, User: {}, User Account: {}, Amount Burned: {}, Timestamp: {}",
-            ctx.accounts.admin.key(),
-            ctx.accounts.user_authority.key(),
-            ctx.accounts.user_token_account.key(),
-            amount,
-            current_timestamp
-        );
+            },
+        ), amount)?;
 
         Ok(())
     }
 
-    /// Enable token transfers (admin only, PERMANENT one-way operation)
     pub fn enable_transfers(ctx: Context<EnableTransfers>) -> Result<()> {
         let token_state = &mut ctx.accounts.token_state;
-        
-        // CRITICAL SECURITY CHECK 1: Verify admin is calling this function
-        require!(
-            ctx.accounts.admin.key() == token_state.admin,
-            MercleError::UnauthorizedAdmin
-        );
+        require!(!token_state.transfers_permanently_enabled, MercleError::TransfersAlreadyPermanentlyEnabled);
 
-        // CRITICAL SECURITY CHECK 2: Verify contract is initialized
-        require!(
-            token_state.is_initialized,
-            MercleError::ContractNotInitialized
-        );
-
-        // CRITICAL SECURITY CHECK 3: Verify token mint has been created
-        require!(
-            token_state.token_mint != Pubkey::default(),
-            MercleError::TokenMintNotCreated
-        );
-
-        // CRITICAL SECURITY CHECK 4: Verify transfers are not already permanently enabled
-        require!(
-            !token_state.transfers_permanently_enabled,
-            MercleError::TransfersAlreadyPermanentlyEnabled
-        );
-
-        // Get current timestamp for logging
-        let clock = Clock::get()?;
-        let current_timestamp = clock.unix_timestamp;
-
-        // PERMANENT OPERATION: Enable transfers with immutable lock
         token_state.transfers_enabled = true;
-        token_state.transfers_permanently_enabled = true; // CANNOT BE CHANGED BACK
-        token_state.transfer_enable_timestamp = current_timestamp;
-
-        msg!(
-            "TRANSFERS PERMANENTLY ENABLED: Admin: {}, Token: {}, Timestamp: {} - IRREVERSIBLE CHANGE. Users can now unfreeze accounts.",
-            ctx.accounts.admin.key(),
-            token_state.token_mint,
-            current_timestamp
-        );
-
-        // Log the permanent nature of this operation
-        msg!(
-            "WARNING: Transfer enabling is PERMANENT and IRREVERSIBLE. transfers_permanently_enabled = true"
-        );
+        token_state.transfers_permanently_enabled = true;
+        token_state.transfer_enable_timestamp = Clock::get()?.unix_timestamp;
 
         Ok(())
     }
 
-    /// Unfreeze user's token account (only callable after transfers are enabled)
     pub fn unfreeze_account(ctx: Context<UnfreezeAccount>) -> Result<()> {
-        let token_state = &ctx.accounts.token_state;
-        
-        // CRITICAL SECURITY CHECK 1: Verify contract is initialized
-        require!(
-            token_state.is_initialized,
-            MercleError::ContractNotInitialized
-        );
+        require!(ctx.accounts.token_state.transfers_permanently_enabled, MercleError::TransfersNotPermanentlyEnabled);
 
-        // CRITICAL SECURITY CHECK 2: Verify token mint has been created
-        require!(
-            token_state.token_mint != Pubkey::default(),
-            MercleError::TokenMintNotCreated
-        );
-
-        // CRITICAL SECURITY CHECK 3: Verify transfers are enabled
-        require!(
-            token_state.transfers_enabled,
-            MercleError::TransfersNotEnabled
-        );
-
-        // CRITICAL SECURITY CHECK 4: Verify the mint account matches the stored mint
-        require!(
-            ctx.accounts.mint.key() == token_state.token_mint,
-            MercleError::InvalidTokenMint
-        );
-
-        // CRITICAL SECURITY CHECK 5: Verify the token account is for the correct mint
-        require!(
-            ctx.accounts.user_token_account.mint == token_state.token_mint,
-            MercleError::InvalidTokenAccount
-        );
-
-        // CRITICAL SECURITY CHECK 6: Verify the user owns the token account
-        require!(
-            ctx.accounts.user_token_account.owner == ctx.accounts.user.key(),
-            MercleError::UnauthorizedUnfreeze
-        );
-
-        // Get current timestamp for logging
-        let clock = Clock::get()?;
-        let current_timestamp = clock.unix_timestamp;
-
-        // Create PDA signer for minting
-        let seeds = &[
-            b"token_state".as_ref(),
-            &[ctx.bumps.token_state],
-        ];
-        let _signer_seeds = &[&seeds[..]];
-
-        // CRITICAL SECURITY: Only unfreeze if transfers are permanently enabled
-        // This prevents temporary unfreezing exploits
-        require!(
-            token_state.transfers_permanently_enabled,
-            MercleError::TransfersNotPermanentlyEnabled
-        );
-
-        // Create PDA signer for unfreezing
-        let unfreeze_seeds = &[
-            b"token_state".as_ref(),
-            &[ctx.bumps.token_state],
-        ];
-        let unfreeze_signer_seeds = &[&unfreeze_seeds[..]];
-
-        // Create CPI context for unfreezing
-        let unfreeze_cpi_accounts = ThawAccount {
+        let seeds = &[b"token_state".as_ref(), &[ctx.bumps.token_state]];
+        thaw_account(CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            ThawAccount {
             account: ctx.accounts.user_token_account.to_account_info(),
             mint: ctx.accounts.mint.to_account_info(),
             authority: ctx.accounts.token_state.to_account_info(),
-        };
-        let unfreeze_cpi_program = ctx.accounts.token_program.to_account_info();
-        let unfreeze_cpi_ctx = CpiContext::new_with_signer(unfreeze_cpi_program, unfreeze_cpi_accounts, unfreeze_signer_seeds);
-
-        // Unfreeze the account (only when transfers are permanently enabled)
-        thaw_account(unfreeze_cpi_ctx)?;
-
-        msg!(
-            "ACCOUNT UNFROZEN: User: {}, Account: {}, Timestamp: {} - PERMANENT TRANSFERS ENABLED",
-            ctx.accounts.user.key(),
-            ctx.accounts.user_token_account.key(),
-            current_timestamp
-        );
+            },
+            &[&seeds[..]],
+        ))?;
 
         Ok(())
     }
 
-    /// Transfer tokens between users (requires transfers to be enabled)
-    pub fn transfer_tokens(
-        ctx: Context<TransferTokens>,
-        amount: u64,
-    ) -> Result<()> {
-        let token_state = &ctx.accounts.token_state;
-        
-        // CRITICAL SECURITY CHECK 1: Verify contract is initialized
-        require!(
-            token_state.is_initialized,
-            MercleError::ContractNotInitialized
-        );
+    pub fn transfer_tokens(ctx: Context<TransferTokens>, amount: u64) -> Result<()> {
+        require!(ctx.accounts.token_state.transfers_enabled, MercleError::TransfersNotEnabled);
+        require!(amount > 0, MercleError::InvalidTransferAmount);
+        require!(ctx.accounts.from_token_account.amount >= amount, MercleError::InsufficientBalance);
 
-        // CRITICAL SECURITY CHECK 2: Verify token mint has been created
-        require!(
-            token_state.token_mint != Pubkey::default(),
-            MercleError::TokenMintNotCreated
-        );
-
-        // CRITICAL SECURITY CHECK 3: Verify transfers are enabled
-        require!(
-            token_state.transfers_enabled,
-            MercleError::TransfersNotEnabled
-        );
-
-        // CRITICAL SECURITY CHECK 4: Verify the mint account matches the stored mint
-        require!(
-            ctx.accounts.mint.key() == token_state.token_mint,
-            MercleError::InvalidTokenMint
-        );
-
-        // CRITICAL SECURITY CHECK 5: Verify both token accounts are for the correct mint
-        require!(
-            ctx.accounts.from_token_account.mint == token_state.token_mint,
-            MercleError::InvalidTokenAccount
-        );
-
-        require!(
-            ctx.accounts.to_token_account.mint == token_state.token_mint,
-            MercleError::InvalidTokenAccount
-        );
-
-        // CRITICAL SECURITY CHECK 6: Verify amount is not zero
-        require!(
-            amount > 0,
-            MercleError::InvalidTransferAmount
-        );
-
-        // CRITICAL SECURITY CHECK 7: Verify sender has sufficient balance
-        require!(
-            ctx.accounts.from_token_account.amount >= amount,
-            MercleError::InsufficientBalance
-        );
-
-        // CRITICAL SECURITY CHECK 8: Verify sender is the owner of the from account
-        require!(
-            ctx.accounts.from_token_account.owner == ctx.accounts.from_authority.key(),
-            MercleError::UnauthorizedTransfer
-        );
-
-        // Get current timestamp for logging
-        let clock = Clock::get()?;
-        let current_timestamp = clock.unix_timestamp;
-
-        // Create CPI context for transferring tokens
-        let cpi_accounts = Transfer {
+        transfer(CpiContext::new(
+            ctx.accounts.token_program.to_account_info(),
+            Transfer {
             from: ctx.accounts.from_token_account.to_account_info(),
             to: ctx.accounts.to_token_account.to_account_info(),
             authority: ctx.accounts.from_authority.to_account_info(),
-        };
-        let cpi_program = ctx.accounts.token_program.to_account_info();
-        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
-
-        // Transfer tokens
-        transfer(cpi_ctx, amount)?;
-
-        msg!(
-            "TRANSFER SUCCESSFUL: From: {}, To: {}, Amount: {}, Timestamp: {}",
-            ctx.accounts.from_token_account.key(),
-            ctx.accounts.to_token_account.key(),
-            amount,
-            current_timestamp
-        );
+            },
+        ), amount)?;
 
         Ok(())
     }
 
-    /// Update time-lock settings (admin only)
-    pub fn update_time_lock(
-        ctx: Context<UpdateTimeLock>,
-        claim_period_seconds: i64,
-        time_lock_enabled: bool,
-    ) -> Result<()> {
+    pub fn update_time_lock(ctx: Context<UpdateTimeLock>, claim_period_seconds: i64, time_lock_enabled: bool) -> Result<()> {
+        require!(claim_period_seconds >= 30 && claim_period_seconds <= 31536000, MercleError::InvalidClaimPeriod);
+
         let token_state = &mut ctx.accounts.token_state;
-        
-        // CRITICAL SECURITY CHECK 1: Verify admin is calling this function
-        require!(
-            ctx.accounts.admin.key() == token_state.admin,
-            MercleError::UnauthorizedAdmin
-        );
-
-        // CRITICAL SECURITY CHECK 2: Verify contract is initialized
-        require!(
-            token_state.is_initialized,
-            MercleError::ContractNotInitialized
-        );
-
-        // Validate claim period (must be reasonable)
-        require!(
-            claim_period_seconds >= 3600, // Minimum 1 hour
-            MercleError::InvalidClaimPeriod
-        );
-        
-        require!(
-            claim_period_seconds <= 31536000, // Maximum 1 year
-            MercleError::InvalidClaimPeriod
-        );
-
-        // Get current timestamp for logging
-        let clock = Clock::get()?;
-        let current_timestamp = clock.unix_timestamp;
-
-        // Update time-lock settings
-        let old_period = token_state.claim_period_seconds;
-        let old_enabled = token_state.time_lock_enabled;
-        
         token_state.claim_period_seconds = claim_period_seconds;
         token_state.time_lock_enabled = time_lock_enabled;
 
-        msg!(
-            "TIME-LOCK UPDATED: Admin: {}, Period: {} → {} seconds, Enabled: {} → {}, Timestamp: {}",
-            ctx.accounts.admin.key(),
-            old_period,
-            claim_period_seconds,
-            old_enabled,
-            time_lock_enabled,
-            current_timestamp
-        );
-
         Ok(())
     }
 
-    /// Set upgrade authority (current upgrade authority only)
-    pub fn set_upgrade_authority(
-        ctx: Context<SetUpgradeAuthority>,
-        new_upgrade_authority: Option<Pubkey>,
-    ) -> Result<()> {
+    pub fn set_upgrade_authority(ctx: Context<SetUpgradeAuthority>, new_upgrade_authority: Option<Pubkey>) -> Result<()> {
         let token_state = &mut ctx.accounts.token_state;
-        
-        // CRITICAL SECURITY CHECK 1: Verify current upgrade authority is calling this function
-        require!(
-            ctx.accounts.current_upgrade_authority.key() == token_state.upgrade_authority,
-            MercleError::UnauthorizedUpgradeAuthority
-        );
-
-        // CRITICAL SECURITY CHECK 2: Verify contract is initialized
-        require!(
-            token_state.is_initialized,
-            MercleError::ContractNotInitialized
-        );
-
-        // CRITICAL SECURITY CHECK 3: Verify contract is upgradeable
-        require!(
-            token_state.upgradeable,
-            MercleError::ContractNotUpgradeable
-        );
-
-        // Get current timestamp for logging
-        let clock = Clock::get()?;
-        let current_timestamp = clock.unix_timestamp;
-
-        let old_authority = token_state.upgrade_authority;
-
         match new_upgrade_authority {
-            Some(new_auth) => {
-                token_state.upgrade_authority = new_auth;
-                msg!(
-                    "UPGRADE AUTHORITY CHANGED: {} → {}, Timestamp: {}",
-                    old_authority,
-                    new_auth,
-                    current_timestamp
-                );
-            }
+            Some(new_auth) => token_state.upgrade_authority = new_auth,
             None => {
-                // Setting to None makes contract non-upgradeable permanently
                 token_state.upgrade_authority = Pubkey::default();
                 token_state.upgradeable = false;
-                msg!(
-                    "UPGRADE AUTHORITY REMOVED: Contract is now IMMUTABLE, Timestamp: {}",
-                    current_timestamp
-                );
             }
         }
-
         Ok(())
     }
 
-    /// Validate upgrade authorization (called before upgrades)
     pub fn validate_upgrade(ctx: Context<ValidateUpgrade>) -> Result<()> {
-        let token_state = &ctx.accounts.token_state;
-        
-        // CRITICAL SECURITY CHECK 1: Verify upgrade authority is calling this function
-        require!(
-            ctx.accounts.upgrade_authority.key() == token_state.upgrade_authority,
-            MercleError::UnauthorizedUpgradeAuthority
-        );
-
-        // CRITICAL SECURITY CHECK 2: Verify contract is initialized
-        require!(
-            token_state.is_initialized,
-            MercleError::ContractNotInitialized
-        );
-
-        // CRITICAL SECURITY CHECK 3: Verify contract is upgradeable
-        require!(
-            token_state.upgradeable,
-            MercleError::ContractNotUpgradeable
-        );
-
-        // CRITICAL SECURITY CHECK 4: Verify program data account
-        require!(
-            ctx.accounts.program_data.key() != Pubkey::default(),
-            MercleError::InvalidProgramData
-        );
-
-        // Get current timestamp for logging
-        let clock = Clock::get()?;
-        let current_timestamp = clock.unix_timestamp;
-
-        msg!(
-            "UPGRADE VALIDATED: Authority: {}, Program: {}, Timestamp: {} - UPGRADE AUTHORIZED",
-            ctx.accounts.upgrade_authority.key(),
-            ctx.program_id,
-            current_timestamp
-        );
-
+        require!(ctx.accounts.program_data.key() != Pubkey::default(), MercleError::InvalidProgramData);
         Ok(())
     }
 
-    /// Create contract treasury account (admin only)
     pub fn create_treasury(ctx: Context<CreateTreasury>) -> Result<()> {
-        let token_state = &mut ctx.accounts.token_state;
-        
-        // CRITICAL SECURITY CHECK 1: Verify admin is calling this function
-        require!(
-            ctx.accounts.admin.key() == token_state.admin,
-            MercleError::UnauthorizedAdmin
-        );
-
-        // CRITICAL SECURITY CHECK 2: Verify contract is initialized
-        require!(
-            token_state.is_initialized,
-            MercleError::ContractNotInitialized
-        );
-
-        // CRITICAL SECURITY CHECK 3: Verify token mint has been created
-        require!(
-            token_state.token_mint != Pubkey::default(),
-            MercleError::TokenMintNotCreated
-        );
-
-        // CRITICAL SECURITY CHECK 4: Verify treasury not already created
-        require!(
-            token_state.treasury_account == Pubkey::default(),
-            MercleError::TreasuryAlreadyCreated
-        );
-
-        // Store treasury account
-        token_state.treasury_account = ctx.accounts.treasury_account.key();
-
-        // Get current timestamp for logging
-        let clock = Clock::get()?;
-        let current_timestamp = clock.unix_timestamp;
-
-        msg!(
-            "TREASURY CREATED: Admin: {}, Treasury Account: {}, Timestamp: {}",
-            ctx.accounts.admin.key(),
-            ctx.accounts.treasury_account.key(),
-            current_timestamp
-        );
-
+        ctx.accounts.token_state.treasury_account = ctx.accounts.treasury_account.key();
         Ok(())
     }
 
-    /// Mint tokens to contract treasury (admin only)
-    pub fn mint_to_treasury(
-        ctx: Context<MintToTreasury>,
-        amount: u64,
-    ) -> Result<()> {
-        let token_state = &ctx.accounts.token_state;
-        
-        // CRITICAL SECURITY CHECK 1: Verify admin is calling this function
-        require!(
-            ctx.accounts.admin.key() == token_state.admin,
-            MercleError::UnauthorizedAdmin
-        );
+    pub fn mint_to_treasury(ctx: Context<MintToTreasury>, amount: u64) -> Result<()> {
+        require!(amount > 0, MercleError::InvalidMintAmount);
 
-        // CRITICAL SECURITY CHECK 2: Verify contract is initialized
-        require!(
-            token_state.is_initialized,
-            MercleError::ContractNotInitialized
-        );
-
-        // CRITICAL SECURITY CHECK 3: Verify token mint has been created
-        require!(
-            token_state.token_mint != Pubkey::default(),
-            MercleError::TokenMintNotCreated
-        );
-
-        // CRITICAL SECURITY CHECK 4: Verify treasury has been created
-        require!(
-            token_state.treasury_account != Pubkey::default(),
-            MercleError::TreasuryNotCreated
-        );
-
-        // CRITICAL SECURITY CHECK 5: Verify treasury account matches stored account
-        require!(
-            ctx.accounts.treasury_account.key() == token_state.treasury_account,
-            MercleError::InvalidTreasuryAccount
-        );
-
-        // CRITICAL SECURITY CHECK 6: Verify amount is not zero
-        require!(
-            amount > 0,
-            MercleError::InvalidMintAmount
-        );
-
-        // Create PDA signer for minting
-        let seeds = &[
-            b"token_state".as_ref(),
-            &[ctx.bumps.token_state],
-        ];
-        let signer_seeds = &[&seeds[..]];
-
-        // Create CPI context for minting to treasury
-        let cpi_accounts = MintTo {
+        let seeds = &[b"token_state".as_ref(), &[ctx.bumps.token_state]];
+        mint_to(CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            MintTo {
             mint: ctx.accounts.mint.to_account_info(),
             to: ctx.accounts.treasury_account.to_account_info(),
             authority: ctx.accounts.token_state.to_account_info(),
-        };
-        let cpi_program = ctx.accounts.token_program.to_account_info();
-        let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
-
-        // Mint tokens to treasury
-        mint_to(cpi_ctx, amount)?;
-
-        // Get current timestamp for logging
-        let clock = Clock::get()?;
-        let current_timestamp = clock.unix_timestamp;
-
-        msg!(
-            "MINTED TO TREASURY: Admin: {}, Amount: {}, Treasury: {}, Timestamp: {}",
-            ctx.accounts.admin.key(),
-            amount,
-            ctx.accounts.treasury_account.key(),
-            current_timestamp
-        );
+            },
+            &[&seeds[..]],
+        ), amount)?;
 
         Ok(())
     }
 
-    /// Burn tokens from contract treasury (admin only)
-    pub fn burn_from_treasury(
-        ctx: Context<BurnFromTreasury>,
-        amount: u64,
-    ) -> Result<()> {
-        let token_state = &ctx.accounts.token_state;
+    pub fn burn_from_treasury(ctx: Context<BurnFromTreasury>, amount: u64) -> Result<()> {
+        require!(amount > 0, MercleError::InvalidBurnAmount);
+        require!(ctx.accounts.treasury_account.amount >= amount, MercleError::InsufficientTreasuryBalance);
+
+        let seeds = &[b"token_state".as_ref(), &[ctx.bumps.token_state]];
+        burn(CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            Burn {
+                mint: ctx.accounts.mint.to_account_info(),
+                from: ctx.accounts.treasury_account.to_account_info(),
+                authority: ctx.accounts.token_state.to_account_info(),
+            },
+            &[&seeds[..]],
+        ), amount)?;
+
+        Ok(())
+    }
+
+    pub fn update_admin(ctx: Context<UpdateAdmin>, new_admin: Pubkey) -> Result<()> {
+        let token_state = &mut ctx.accounts.token_state;
         
-        // CRITICAL SECURITY CHECK 1: Verify admin is calling this function
         require!(
             ctx.accounts.admin.key() == token_state.admin,
             MercleError::UnauthorizedAdmin
         );
 
-        // CRITICAL SECURITY CHECK 2: Verify contract is initialized
         require!(
             token_state.is_initialized,
             MercleError::ContractNotInitialized
         );
 
-        // CRITICAL SECURITY CHECK 3: Verify token mint has been created
-        require!(
-            token_state.token_mint != Pubkey::default(),
-            MercleError::TokenMintNotCreated
-        );
-
-        // CRITICAL SECURITY CHECK 4: Verify treasury has been created
-        require!(
-            token_state.treasury_account != Pubkey::default(),
-            MercleError::TreasuryNotCreated
-        );
-
-        // CRITICAL SECURITY CHECK 5: Verify treasury account matches stored account
-        require!(
-            ctx.accounts.treasury_account.key() == token_state.treasury_account,
-            MercleError::InvalidTreasuryAccount
-        );
-
-        // CRITICAL SECURITY CHECK 6: Verify amount is not zero
-        require!(
-            amount > 0,
-            MercleError::InvalidBurnAmount
-        );
-
-        // CRITICAL SECURITY CHECK 7: Verify treasury has sufficient balance
-        require!(
-            ctx.accounts.treasury_account.amount >= amount,
-            MercleError::InsufficientTreasuryBalance
-        );
-
-        // Create PDA signer for burning from treasury
-        let seeds = &[
-            b"token_state".as_ref(),
-            &[ctx.bumps.token_state],
-        ];
-        let signer_seeds = &[&seeds[..]];
-
-        // Create CPI context for burning from treasury
-        let cpi_accounts = Burn {
-            mint: ctx.accounts.mint.to_account_info(),
-            from: ctx.accounts.treasury_account.to_account_info(),
-            authority: ctx.accounts.token_state.to_account_info(),
-        };
-        let cpi_program = ctx.accounts.token_program.to_account_info();
-        let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
-
-        // Burn tokens from treasury
-        burn(cpi_ctx, amount)?;
-
-        // Get current timestamp for logging
-        let clock = Clock::get()?;
-        let current_timestamp = clock.unix_timestamp;
+        let old_admin = token_state.admin;
+        token_state.admin = new_admin;
 
         msg!(
-            "BURNED FROM TREASURY: Admin: {}, Amount: {}, Treasury: {}, Timestamp: {}, Remaining: {}",
-            ctx.accounts.admin.key(),
-            amount,
-            ctx.accounts.treasury_account.key(),
-            current_timestamp,
-            ctx.accounts.treasury_account.amount.saturating_sub(amount)
+            "Admin updated: {} → {}",
+            old_admin,
+            new_admin
         );
 
         Ok(())
     }
+
+    pub fn create_metadata(ctx: Context<CreateMetadata>, name: String, symbol: String, uri: String) -> Result<()> {
+        let token_state = &ctx.accounts.token_state;
+        require!(ctx.accounts.admin.key() == token_state.admin, MercleError::UnauthorizedAdmin);
+        require!(token_state.is_initialized, MercleError::ContractNotInitialized);
+        require!(name.len() <= 32, MercleError::InvalidTokenNameLength);
+        require!(symbol.len() <= 16, MercleError::InvalidTokenSymbolLength);
+
+        let seeds = &[b"token_state".as_ref(), &[ctx.bumps.token_state]];
+        let signer_seeds = &[&seeds[..]];
+
+        // Create metadata account using CPI
+        let create_metadata_accounts = anchor_lang::solana_program::instruction::Instruction {
+            program_id: ctx.accounts.token_metadata_program.key(),
+            accounts: vec![
+                anchor_lang::solana_program::instruction::AccountMeta::new(ctx.accounts.metadata.key(), false),
+                anchor_lang::solana_program::instruction::AccountMeta::new_readonly(ctx.accounts.mint.key(), false),
+                anchor_lang::solana_program::instruction::AccountMeta::new_readonly(ctx.accounts.token_state.key(), false),
+                anchor_lang::solana_program::instruction::AccountMeta::new(ctx.accounts.admin.key(), true),
+                anchor_lang::solana_program::instruction::AccountMeta::new_readonly(ctx.accounts.admin.key(), false),
+                anchor_lang::solana_program::instruction::AccountMeta::new_readonly(ctx.accounts.system_program.key(), false),
+                anchor_lang::solana_program::instruction::AccountMeta::new_readonly(ctx.accounts.rent.key(), false),
+            ],
+            data: {
+                let mut data = vec![33u8]; // CreateMetadataAccountV3 discriminator
+                data.extend_from_slice(&(name.len() as u32).to_le_bytes());
+                data.extend_from_slice(name.as_bytes());
+                data.extend_from_slice(&(symbol.len() as u32).to_le_bytes());
+                data.extend_from_slice(symbol.as_bytes());
+                data.extend_from_slice(&(uri.len() as u32).to_le_bytes());
+                data.extend_from_slice(uri.as_bytes());
+                data.extend_from_slice(&0u16.to_le_bytes()); // seller_fee_basis_points
+                data.push(0u8); // creators (None)
+                data.push(0u8); // collection (None)
+                data.push(0u8); // uses (None)
+                data.push(1u8); // is_mutable
+                data
+            },
+        };
+
+        anchor_lang::solana_program::program::invoke_signed(
+            &create_metadata_accounts,
+            &[
+                ctx.accounts.metadata.to_account_info(),
+                ctx.accounts.mint.to_account_info(),
+                ctx.accounts.token_state.to_account_info(),
+                ctx.accounts.admin.to_account_info(),
+                ctx.accounts.system_program.to_account_info(),
+                ctx.accounts.rent.to_account_info(),
+            ],
+            signer_seeds,
+        )?;
+
+        msg!("Metadata created: {} ({}), URI: {}", name, symbol, uri);
+        Ok(())
+    }
+
+    pub fn transfer_mint_authority_to_pda(ctx: Context<TransferMintAuthority>) -> Result<()> {
+        let token_state = &ctx.accounts.token_state;
+        require!(ctx.accounts.admin.key() == token_state.admin, MercleError::UnauthorizedAdmin);
+        require!(token_state.is_initialized, MercleError::ContractNotInitialized);
+
+        // Transfer mint authority from admin to PDA
+        set_authority(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                SetAuthority {
+                    account_or_mint: ctx.accounts.mint.to_account_info(),
+                    current_authority: ctx.accounts.admin.to_account_info(),
+                },
+            ),
+            anchor_spl::token::spl_token::instruction::AuthorityType::MintTokens,
+            Some(ctx.accounts.token_state.key()),
+        )?;
+
+        msg!("Mint authority transferred from admin to PDA: {}", ctx.accounts.token_state.key());
+        Ok(())
+    }
+
 }
 
 
@@ -1484,7 +554,7 @@ pub struct CreateTokenMint<'info> {
         init,
         payer = admin,
         mint::decimals = decimals,
-        mint::authority = token_state.key(),
+        mint::authority = admin.key(),
         mint::freeze_authority = token_state.key(),
         mint::token_program = token_program,
     )]
@@ -1842,14 +912,6 @@ pub struct BurnFromTreasury<'info> {
     pub token_program: Program<'info, Token>,
 }
 
-#[derive(Accounts)]
-pub struct CheckTransfersEnabled<'info> {
-    #[account(
-        seeds = [b"token_state"],
-        bump
-    )]
-    pub token_state: Account<'info, TokenState>,
-}
 
 #[derive(Accounts)]
 pub struct PauseTransfers<'info> {
@@ -1894,6 +956,74 @@ pub struct PermanentlyEnableTransfers<'info> {
         constraint = admin.key() == token_state.admin @ MercleError::UnauthorizedAdmin
     )]
     pub admin: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct UpdateAdmin<'info> {
+    #[account(
+        mut,
+        seeds = [b"token_state"],
+        bump
+    )]
+    pub token_state: Account<'info, TokenState>,
+    
+    #[account(
+        constraint = admin.key() == token_state.admin @ MercleError::UnauthorizedAdmin
+    )]
+    pub admin: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct CreateMetadata<'info> {
+    #[account(
+        mut,
+        seeds = [b"token_state"],
+        bump
+    )]
+    pub token_state: Account<'info, TokenState>,
+    
+    #[account(
+        constraint = mint.key() == token_state.token_mint @ MercleError::InvalidTokenMint
+    )]
+    pub mint: Account<'info, Mint>,
+    
+    /// CHECK: Metadata account to be created
+    #[account(mut)]
+    pub metadata: UncheckedAccount<'info>,
+    
+    #[account(
+        mut,
+        constraint = admin.key() == token_state.admin @ MercleError::UnauthorizedAdmin
+    )]
+    pub admin: Signer<'info>,
+    
+    /// CHECK: Token Metadata Program
+    pub token_metadata_program: UncheckedAccount<'info>,
+    
+    pub system_program: Program<'info, System>,
+    pub rent: Sysvar<'info, Rent>,
+}
+
+#[derive(Accounts)]
+pub struct TransferMintAuthority<'info> {
+    #[account(
+        seeds = [b"token_state"],
+        bump
+    )]
+    pub token_state: Account<'info, TokenState>,
+    
+    #[account(
+        mut,
+        constraint = mint.key() == token_state.token_mint @ MercleError::InvalidTokenMint
+    )]
+    pub mint: Account<'info, Mint>,
+    
+    #[account(
+        constraint = admin.key() == token_state.admin @ MercleError::UnauthorizedAdmin
+    )]
+    pub admin: Signer<'info>,
+    
+    pub token_program: Program<'info, Token>,
 }
 
 #[account]

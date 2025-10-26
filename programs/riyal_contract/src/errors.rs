@@ -2,150 +2,102 @@ use anchor_lang::prelude::*;
 
 #[error_code]
 pub enum MercleError {
-    #[msg("Unauthorized admin access")]
+    #[msg("Unauthorized")]
     UnauthorizedAdmin,
-    
-    #[msg("Contract not initialized")]
+    #[msg("Not initialized")]
     ContractNotInitialized,
-    
-    #[msg("Token mint already created")]
+    #[msg("Mint exists")]
     TokenMintAlreadyCreated,
-    
-    #[msg("Invalid token name length")]
+    #[msg("Invalid name")]
     InvalidTokenNameLength,
-    
-    #[msg("Invalid token symbol length")]
+    #[msg("Invalid symbol")]
     InvalidTokenSymbolLength,
-    
-    #[msg("Token mint not created")]
+    #[msg("No mint")]
     TokenMintNotCreated,
-    
-    #[msg("Invalid token mint")]
+    #[msg("Invalid mint")]
     InvalidTokenMint,
-    
-    #[msg("Invalid token account")]
+    #[msg("Invalid account")]
     InvalidTokenAccount,
-    
-    #[msg("Invalid mint amount")]
+    #[msg("Invalid amount")]
     InvalidMintAmount,
-    
-    #[msg("Invalid user data")]
+    #[msg("Invalid data")]
     InvalidUserData,
-    
     #[msg("Invalid nonce")]
     InvalidNonce,
-    
-    #[msg("Invalid user signature")]
+    #[msg("Bad user sig")]
     InvalidUserSignature,
-    
-    #[msg("Invalid admin signature")]
+    #[msg("Bad admin sig")]
     InvalidAdminSignature,
-    
     #[msg("Nonce overflow")]
     NonceOverflow,
-    
-    #[msg("Nonce is not increasing (strict ordering required)")]
+    #[msg("Nonce sequence")]
     NonceNotIncreasing,
-    
-    #[msg("Nonce is too high (maximum 1 increment allowed)")]
+    #[msg("Nonce too high")]
     NonceTooHigh,
-    
-    #[msg("Claim attempted too soon after previous claim")]
+    #[msg("Too soon")]
     ClaimTooSoon,
-    
-    #[msg("Claims are too frequent (minimum 1 second gap required)")]
+    #[msg("Too frequent")]
     ClaimTooFrequent,
-    
-    #[msg("Invalid nonce sequence")]
+    #[msg("Nonce error")]
     InvalidNonceSequence,
-    
-    #[msg("Claim count overflow")]
+    #[msg("Count overflow")]
     ClaimCountOverflow,
-    
-    #[msg("Invalid burn amount")]
+    #[msg("Bad burn amt")]
     InvalidBurnAmount,
-    
-    #[msg("Insufficient balance for burn operation")]
+    #[msg("Low balance")]
     InsufficientBalance,
-    
-    #[msg("Transfers are not enabled")]
+    #[msg("Disabled")]
     TransfersNotEnabled,
-    
-    #[msg("Invalid transfer amount")]
+    #[msg("Bad xfer amt")]
     InvalidTransferAmount,
-    
-    #[msg("Unauthorized transfer - not token account owner")]
+    #[msg("Unauth xfer")]
     UnauthorizedTransfer,
-    
-    #[msg("Unauthorized burn - not token account owner")]
+    #[msg("Unauth burn")]
     UnauthorizedBurn,
-    
-    #[msg("Unauthorized unfreeze - not token account owner")]
+    #[msg("Unauth unfreeze")]
     UnauthorizedUnfreeze,
-    
-    #[msg("User signature not verified by Ed25519 program")]
+    #[msg("User sig fail")]
     UserSignatureNotVerified,
-    
-    #[msg("Admin signature not verified by Ed25519 program")]
+    #[msg("Admin sig fail")]
     AdminSignatureNotVerified,
-    
-    #[msg("Invalid Ed25519 instruction format")]
+    #[msg("Bad ed25519")]
     InvalidEd25519Instruction,
-    
-    #[msg("Treasury already created")]
+    #[msg("Treasury exists")]
     TreasuryAlreadyCreated,
-    
-    #[msg("Treasury not created")]
+    #[msg("No treasury")]
     TreasuryNotCreated,
-    
-    #[msg("Invalid treasury account")]
+    #[msg("Bad treasury")]
     InvalidTreasuryAccount,
-    
-    #[msg("Insufficient treasury balance")]
+    #[msg("Low treasury")]
     InsufficientTreasuryBalance,
-    
-    #[msg("Invalid claim period - must be between 1 hour and 1 year")]
+    #[msg("Bad period")]
     InvalidClaimPeriod,
-    
-    #[msg("Claim is time-locked - wait for next allowed claim time")]
+    #[msg("Locked")]
     ClaimTimeLocked,
-    
-    #[msg("Claim period has not elapsed since last claim")]
+    #[msg("Period active")]
     ClaimPeriodNotElapsed,
-    
-    #[msg("Timestamp overflow in calculation")]
+    #[msg("Time overflow")]
     TimestampOverflow,
-    
-    #[msg("Unauthorized upgrade authority")]
+    #[msg("Unauth upgrade")]
     UnauthorizedUpgradeAuthority,
-    
-    #[msg("Contract is not upgradeable")]
+    #[msg("Not upgradeable")]
     ContractNotUpgradeable,
-    
-    #[msg("Invalid program data account")]
+    #[msg("Bad program data")]
     InvalidProgramData,
-    
-    #[msg("Transfers are already permanently enabled and cannot be changed")]
+    #[msg("Already enabled")]
     TransfersAlreadyPermanentlyEnabled,
-    
-    #[msg("Transfers cannot be disabled once permanently enabled")]
+    #[msg("Cannot disable")]
     TransfersCannotBeDisabled,
-    
-    #[msg("Unauthorized destination - user can only claim to their own token account")]
+    #[msg("Wrong dest")]
     UnauthorizedDestination,
-    
-    #[msg("Claim has expired - valid_until timestamp has passed")]
+    #[msg("Expired")]
     ClaimExpired,
-    
-    #[msg("Invalid claim payload - failed to deserialize")]
+    #[msg("Bad payload")]
     InvalidClaimPayload,
-    
-    #[msg("Transfers are paused - token transfers are currently disabled")]
+    #[msg("Paused")]
     TransfersPaused,
-    
-    #[msg("Transfers are permanently enabled and cannot be paused")]
+    #[msg("Permanent")]
     TransfersPermanentlyEnabled,
-    
-    #[msg("Transfers must be permanently enabled to unfreeze accounts")]
+    #[msg("Not permanent")]
     TransfersNotPermanentlyEnabled,
 }

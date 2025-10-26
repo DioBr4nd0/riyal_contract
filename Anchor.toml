@@ -6,10 +6,10 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-mercle_token = "DUALvp1DCViwVuWYPF66uPcdwiGXXLSW1pPXcAei3ihK"
+mercle_token = "2XWNXNwRdT9rfKUjsmtwi5St4yaLNDKoHiKiASyn3rLZ"
 
 [programs.devnet]
-mercle_token = "DUALvp1DCViwVuWYPF66uPcdwiGXXLSW1pPXcAei3ihK"
+mercle_token = "2XWNXNwRdT9rfKUjsmtwi5St4yaLNDKoHiKiASyn3rLZ"
 
 [registry]
 url = "https://api.apr.dev"
