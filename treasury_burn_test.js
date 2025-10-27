@@ -34,7 +34,7 @@ async function testError(testName, testFn) {
 }
 
 (async () => {
-  console.log("🏦 RIYAL CONTRACT - TREASURY & BURN FLOW TESTS");
+  console.log("🏦 MERCLE CONTRACT - TREASURY & BURN FLOW TESTS");
   console.log("===============================================");
 
   const connection = new anchor.web3.Connection("http://127.0.0.1:8899", "confirmed");
@@ -57,7 +57,7 @@ async function testError(testName, testFn) {
 
   const provider = new anchor.AnchorProvider(connection, new anchor.Wallet(admin), {});
   anchor.setProvider(provider);
-  const program = anchor.workspace.riyal_contract;
+  const program = anchor.workspace.MercleToken;
 
   const [tokenStatePDA] = PublicKey.findProgramAddressSync([Buffer.from("token_state")], program.programId);
 
@@ -74,7 +74,7 @@ async function testError(testName, testFn) {
   // Create token mint
   const mint = Keypair.generate();
   await program.methods
-    .createTokenMint(9, "Riyal Token", "RIYAL")
+    .createTokenMint(9, "Mercle Token", "MERCLE")
     .accounts({
       tokenState: tokenStatePDA, mint: mint.publicKey, admin: admin.publicKey,
       tokenProgram: TOKEN_2022_PROGRAM_ID, systemProgram: SystemProgram.programId, rent: SYSVAR_RENT_PUBKEY,
@@ -97,7 +97,7 @@ async function testError(testName, testFn) {
 
   // Mint some tokens to users for testing
   await program.methods
-    .mintTokens(new BN(5000000000)) // 5 RIYAL
+    .mintTokens(new BN(5000000000)) // 5 MERCLE
     .accounts({
       tokenState: tokenStatePDA, mint: mint.publicKey, userTokenAccount: user1ATA,
       admin: admin.publicKey, tokenProgram: TOKEN_2022_PROGRAM_ID,
@@ -105,7 +105,7 @@ async function testError(testName, testFn) {
     .signers([admin]).rpc();
 
   await program.methods
-    .mintTokens(new BN(3000000000)) // 3 RIYAL
+    .mintTokens(new BN(3000000000)) // 3 MERCLE
     .accounts({
       tokenState: tokenStatePDA, mint: mint.publicKey, userTokenAccount: user2ATA,
       admin: admin.publicKey, tokenProgram: TOKEN_2022_PROGRAM_ID,
@@ -113,8 +113,8 @@ async function testError(testName, testFn) {
     .signers([admin]).rpc();
 
   console.log(`✅ Initial tokens minted:`);
-  console.log(`   User1: ${(await getBalance(connection, user1ATA)).ui} RIYAL`);
-  console.log(`   User2: ${(await getBalance(connection, user2ATA)).ui} RIYAL`);
+  console.log(`   User1: ${(await getBalance(connection, user1ATA)).ui} MERCLE`);
+  console.log(`   User2: ${(await getBalance(connection, user2ATA)).ui} MERCLE`);
 
   console.log("\n🏦 STEP 2: TREASURY FLOW TESTS");
   console.log("===============================");
@@ -136,12 +136,12 @@ async function testError(testName, testFn) {
     .signers([admin]).rpc();
 
   console.log(`✅ Treasury created: ${treasuryATA}`);
-  console.log(`   Treasury balance: ${(await getBalance(connection, treasuryATA)).ui} RIYAL`);
+  console.log(`   Treasury balance: ${(await getBalance(connection, treasuryATA)).ui} MERCLE`);
 
   // Test: Mint to treasury
   console.log("\n💰 Testing mint to treasury...");
   await program.methods
-    .mintToTreasury(new BN(10000000000)) // 10 RIYAL
+    .mintToTreasury(new BN(10000000000)) // 10 MERCLE
     .accounts({
       tokenState: tokenStatePDA,
       mint: mint.publicKey,
@@ -152,7 +152,7 @@ async function testError(testName, testFn) {
     .signers([admin]).rpc();
 
   const treasuryBalance = await getBalance(connection, treasuryATA);
-  console.log(`✅ Minted to treasury: ${treasuryBalance.ui} RIYAL`);
+  console.log(`✅ Minted to treasury: ${treasuryBalance.ui} MERCLE`);
 
   // Test: Mint to wrong treasury account (should fail)
   console.log("\n🚫 Testing mint to wrong treasury account...");
@@ -173,7 +173,7 @@ async function testError(testName, testFn) {
 
   // Test: Burn from treasury (success)
   console.log("\n🔥 Testing burn from treasury...");
-  const burnAmount = new BN(3000000000); // 3 RIYAL
+  const burnAmount = new BN(3000000000); // 3 MERCLE
   
   await program.methods
     .burnFromTreasury(burnAmount)
@@ -187,12 +187,12 @@ async function testError(testName, testFn) {
     .signers([admin]).rpc();
 
   const newTreasuryBalance = await getBalance(connection, treasuryATA);
-  console.log(`✅ Burned from treasury: ${newTreasuryBalance.ui} RIYAL (was ${treasuryBalance.ui})`);
-  console.log(`   Burned amount: ${burnAmount.toNumber() / 1e9} RIYAL`);
+  console.log(`✅ Burned from treasury: ${newTreasuryBalance.ui} MERCLE (was ${treasuryBalance.ui})`);
+  console.log(`   Burned amount: ${burnAmount.toNumber() / 1e9} MERCLE`);
 
   // Test: Burn more than treasury balance (should fail)
   console.log("\n🚫 Testing burn more than treasury balance...");
-  const excessiveAmount = new BN(20000000000); // 20 RIYAL (more than treasury has)
+  const excessiveAmount = new BN(20000000000); // 20 MERCLE (more than treasury has)
   
   await testError("burnFromTreasury > balance", async () => {
     await program.methods
@@ -211,8 +211,8 @@ async function testError(testName, testFn) {
   console.log("=========================================");
 
   console.log("💰 Balances before burn tests:");
-  console.log(`   User1: ${(await getBalance(connection, user1ATA)).ui} RIYAL`);
-  console.log(`   User2: ${(await getBalance(connection, user2ATA)).ui} RIYAL`);
+  console.log(`   User1: ${(await getBalance(connection, user1ATA)).ui} MERCLE`);
+  console.log(`   User2: ${(await getBalance(connection, user2ATA)).ui} MERCLE`);
 
   // Test: Admin tries to burn without user signature (should fail)
   console.log("\n🚫 Testing admin burn without user signature...");
@@ -264,7 +264,7 @@ async function testError(testName, testFn) {
 
   // Test: Happy path - admin + correct user signer (should succeed)
   console.log("\n✅ Testing successful burn (admin + correct user)...");
-  const burnAmountUser = new BN(2000000000); // 2 RIYAL
+  const burnAmountUser = new BN(2000000000); // 2 MERCLE
   const user1BalanceBefore = await getBalance(connection, user1ATA);
   
   await program.methods
@@ -281,27 +281,27 @@ async function testError(testName, testFn) {
 
   const user1BalanceAfter = await getBalance(connection, user1ATA);
   console.log(`✅ Burn successful!`);
-  console.log(`   User1 balance: ${user1BalanceBefore.ui} → ${user1BalanceAfter.ui} RIYAL`);
-  console.log(`   Burned: ${burnAmountUser.toNumber() / 1e9} RIYAL`);
+  console.log(`   User1 balance: ${user1BalanceBefore.ui} → ${user1BalanceAfter.ui} MERCLE`);
+  console.log(`   Burned: ${burnAmountUser.toNumber() / 1e9} MERCLE`);
 
   console.log("\n🔍 STEP 4: VERIFICATION - ACTUAL TOKEN SUPPLY");
   console.log("=============================================");
   
   // Check actual mint supply to verify tokens were really burned
   const mintInfo = await connection.getTokenSupply(mint.publicKey);
-  console.log(`📊 Current token supply: ${mintInfo.value.uiAmount} RIYAL`);
+  console.log(`📊 Current token supply: ${mintInfo.value.uiAmount} MERCLE`);
   console.log(`   Raw supply: ${mintInfo.value.amount}`);
   
   // Calculate expected supply
-  const initialMinted = 5 + 3 + 10; // User1 + User2 + Treasury = 18 RIYAL
-  const totalBurned = 3 + 2; // Treasury burn + User1 burn = 5 RIYAL
-  const expectedSupply = initialMinted - totalBurned; // Should be 13 RIYAL
+  const initialMinted = 5 + 3 + 10; // User1 + User2 + Treasury = 18 MERCLE
+  const totalBurned = 3 + 2; // Treasury burn + User1 burn = 5 MERCLE
+  const expectedSupply = initialMinted - totalBurned; // Should be 13 MERCLE
   
   console.log(`📈 Supply calculation:`);
-  console.log(`   Initial minted: ${initialMinted} RIYAL`);
-  console.log(`   Total burned: ${totalBurned} RIYAL`);
-  console.log(`   Expected supply: ${expectedSupply} RIYAL`);
-  console.log(`   Actual supply: ${mintInfo.value.uiAmount} RIYAL`);
+  console.log(`   Initial minted: ${initialMinted} MERCLE`);
+  console.log(`   Total burned: ${totalBurned} MERCLE`);
+  console.log(`   Expected supply: ${expectedSupply} MERCLE`);
+  console.log(`   Actual supply: ${mintInfo.value.uiAmount} MERCLE`);
   
   const supplyMatches = Math.abs(mintInfo.value.uiAmount - expectedSupply) < 0.001;
   console.log(`   Supply matches: ${supplyMatches ? '✅ YES' : '❌ NO'}`);

@@ -5,12 +5,17 @@ use anchor_lang::solana_program::{
     sysvar::instructions::{self},
     sysvar::clock::Clock,
 };
+use mpl_token_metadata::{
+    instructions::CreateMetadataAccountV3CpiBuilder,
+    types::DataV2,
+};
+
 pub mod errors;
 use errors::MercleError;
 pub mod signature;
 use signature::verify_admin_signature_only;
 
-declare_id!("2XWNXNwRdT9rfKUjsmtwi5St4yaLNDKoHiKiASyn3rLZ");
+declare_id!("HWuotjdXtQePUmX5WCzPxQkZ3LiiXQ6i8AYSudgJxEts");
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
 pub struct ClaimPayload {
@@ -24,8 +29,8 @@ pub struct ClaimPayload {
 pub mod mercle_token {
     use super::*;
 
-    pub fn initialize(ctx: Context<Initialize>, admin: Pubkey, upgrade_authority: Pubkey, claim_period_seconds: i64, time_lock_enabled: bool, upgradeable: bool) -> Result<()> {
-        require!(claim_period_seconds >= 30 && claim_period_seconds <= 31536000, MercleError::InvalidClaimPeriod);
+    pub fn initialize(ctx: Context<Initialize>, admin: Pubkey, upgrade_authority: Pubkey, claim_delay: i64, time_lock_enabled: bool, upgradeable: bool) -> Result<()> {
+        require!(claim_delay >= 30 && claim_delay <= 31536000, MercleError::InvalidClaimPeriod);
 
         let token_state = &mut ctx.accounts.token_state;
         token_state.admin = admin;
@@ -36,7 +41,7 @@ pub mod mercle_token {
         token_state.transfers_enabled = false;
         token_state.transfers_permanently_enabled = false;
         token_state.transfer_enable_timestamp = 0;
-        token_state.claim_period_seconds = claim_period_seconds;
+        token_state.claim_delay = claim_delay;
         token_state.time_lock_enabled = time_lock_enabled;
         token_state.upgradeable = upgradeable;
         
@@ -166,7 +171,7 @@ pub mod mercle_token {
         if token_state.time_lock_enabled {
             require!(current_timestamp >= user_data.next_allowed_claim_time, MercleError::ClaimTimeLocked);
             if user_data.total_claims > 0 {
-                require!(current_timestamp >= user_data.last_claim_timestamp.saturating_add(token_state.claim_period_seconds), MercleError::ClaimPeriodNotElapsed);
+                require!(current_timestamp >= user_data.last_claim_timestamp.saturating_add(token_state.claim_delay), MercleError::ClaimPeriodNotElapsed);
             }
         } else if user_data.last_claim_timestamp > 0 {
             require!(current_timestamp >= user_data.last_claim_timestamp.saturating_add(1), MercleError::ClaimTooFrequent);
@@ -184,6 +189,25 @@ pub mod mercle_token {
         verify_admin_signature_only(&ctx.accounts.instructions, &message_bytes, &admin_signature, &token_state.admin)?;
 
         let seeds = &[b"token_state".as_ref(), &[ctx.bumps.token_state]];
+        
+        // Check if account is frozen before attempting to thaw
+        let account_state = &ctx.accounts.user_token_account;
+        let is_frozen = account_state.is_frozen();
+        
+        // Only thaw if the account is actually frozen (from previous claim)
+        if is_frozen {
+            thaw_account(CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                ThawAccount {
+                account: ctx.accounts.user_token_account.to_account_info(),
+                mint: ctx.accounts.mint.to_account_info(),
+                authority: ctx.accounts.token_state.to_account_info(),
+                },
+                &[&seeds[..]],
+            ))?;
+        }
+
+        // Mint tokens to the unfrozen account
         mint_to(CpiContext::new_with_signer(
             ctx.accounts.token_program.to_account_info(),
             MintTo {
@@ -194,6 +218,7 @@ pub mod mercle_token {
             &[&seeds[..]],
         ), payload.claim_amount)?;
 
+        // Always freeze account after minting for security
         freeze_account(CpiContext::new_with_signer(
             ctx.accounts.token_program.to_account_info(),
             FreezeAccount {
@@ -208,7 +233,7 @@ pub mod mercle_token {
         user_data.last_claim_timestamp = current_timestamp;
         user_data.total_claims = user_data.total_claims.checked_add(1).ok_or(MercleError::ClaimCountOverflow)?;
         user_data.next_allowed_claim_time = if token_state.time_lock_enabled {
-            current_timestamp.checked_add(token_state.claim_period_seconds).ok_or(MercleError::TimestampOverflow)?
+            current_timestamp.checked_add(token_state.claim_delay).ok_or(MercleError::TimestampOverflow)?
         } else {
             current_timestamp.saturating_add(1)
         };
@@ -277,11 +302,11 @@ pub mod mercle_token {
         Ok(())
     }
 
-    pub fn update_time_lock(ctx: Context<UpdateTimeLock>, claim_period_seconds: i64, time_lock_enabled: bool) -> Result<()> {
-        require!(claim_period_seconds >= 30 && claim_period_seconds <= 31536000, MercleError::InvalidClaimPeriod);
+    pub fn update_time_lock(ctx: Context<UpdateTimeLock>, claim_delay: i64, time_lock_enabled: bool) -> Result<()> {
+        require!(claim_delay >= 30 && claim_delay <= 31536000, MercleError::InvalidClaimPeriod);
 
         let token_state = &mut ctx.accounts.token_state;
-        token_state.claim_period_seconds = claim_period_seconds;
+        token_state.claim_delay = claim_delay;
         token_state.time_lock_enabled = time_lock_enabled;
 
         Ok(())
@@ -369,6 +394,7 @@ pub mod mercle_token {
         Ok(())
     }
 
+    /// ACCESS: ADMIN ONLY (creates Metaplex metadata for the token)
     pub fn create_metadata(ctx: Context<CreateMetadata>, name: String, symbol: String, uri: String) -> Result<()> {
         let token_state = &ctx.accounts.token_state;
         require!(ctx.accounts.admin.key() == token_state.admin, MercleError::UnauthorizedAdmin);
@@ -379,49 +405,27 @@ pub mod mercle_token {
         let seeds = &[b"token_state".as_ref(), &[ctx.bumps.token_state]];
         let signer_seeds = &[&seeds[..]];
 
-        // Create metadata account using CPI
-        let create_metadata_accounts = anchor_lang::solana_program::instruction::Instruction {
-            program_id: ctx.accounts.token_metadata_program.key(),
-            accounts: vec![
-                anchor_lang::solana_program::instruction::AccountMeta::new(ctx.accounts.metadata.key(), false),
-                anchor_lang::solana_program::instruction::AccountMeta::new_readonly(ctx.accounts.mint.key(), false),
-                anchor_lang::solana_program::instruction::AccountMeta::new_readonly(ctx.accounts.token_state.key(), false),
-                anchor_lang::solana_program::instruction::AccountMeta::new(ctx.accounts.admin.key(), true),
-                anchor_lang::solana_program::instruction::AccountMeta::new_readonly(ctx.accounts.admin.key(), false),
-                anchor_lang::solana_program::instruction::AccountMeta::new_readonly(ctx.accounts.system_program.key(), false),
-                anchor_lang::solana_program::instruction::AccountMeta::new_readonly(ctx.accounts.rent.key(), false),
-            ],
-            data: {
-                let mut data = vec![33u8]; // CreateMetadataAccountV3 discriminator
-                data.extend_from_slice(&(name.len() as u32).to_le_bytes());
-                data.extend_from_slice(name.as_bytes());
-                data.extend_from_slice(&(symbol.len() as u32).to_le_bytes());
-                data.extend_from_slice(symbol.as_bytes());
-                data.extend_from_slice(&(uri.len() as u32).to_le_bytes());
-                data.extend_from_slice(uri.as_bytes());
-                data.extend_from_slice(&0u16.to_le_bytes()); // seller_fee_basis_points
-                data.push(0u8); // creators (None)
-                data.push(0u8); // collection (None)
-                data.push(0u8); // uses (None)
-                data.push(1u8); // is_mutable
-                data
-            },
-        };
+        // Create metadata using proper Metaplex CPI
+        CreateMetadataAccountV3CpiBuilder::new(&ctx.accounts.token_metadata_program.to_account_info())
+            .metadata(&ctx.accounts.metadata.to_account_info())
+            .mint(&ctx.accounts.mint.to_account_info())
+            .mint_authority(&ctx.accounts.token_state.to_account_info())
+            .payer(&ctx.accounts.admin.to_account_info())
+            .update_authority(&ctx.accounts.admin.to_account_info(), true)
+            .system_program(&ctx.accounts.system_program.to_account_info())
+            .data(DataV2 {
+                name,
+                symbol,
+                uri,
+                seller_fee_basis_points: 0,
+                creators: None,
+                collection: None,
+                uses: None,
+            })
+            .is_mutable(true)
+            .invoke_signed(signer_seeds)?;
 
-        anchor_lang::solana_program::program::invoke_signed(
-            &create_metadata_accounts,
-            &[
-                ctx.accounts.metadata.to_account_info(),
-                ctx.accounts.mint.to_account_info(),
-                ctx.accounts.token_state.to_account_info(),
-                ctx.accounts.admin.to_account_info(),
-                ctx.accounts.system_program.to_account_info(),
-                ctx.accounts.rent.to_account_info(),
-            ],
-            signer_seeds,
-        )?;
-
-        msg!("Metadata created: {} ({}), URI: {}", name, symbol, uri);
+        msg!("Metadata created successfully");
         Ok(())
     }
 
@@ -1036,7 +1040,7 @@ pub struct TokenState {
     pub transfers_enabled: bool,          // 1 byte
     pub transfers_permanently_enabled: bool, // 1 byte - Once true, cannot be changed
     pub transfer_enable_timestamp: i64,   // 8 bytes - When transfers were enabled
-    pub claim_period_seconds: i64,        // 8 bytes - Time period between claims (in seconds)
+    pub claim_delay: i64,                 // 8 bytes - Time period between claims (in seconds)
     pub time_lock_enabled: bool,          // 1 byte - Whether time-lock is active
     pub upgradeable: bool,                // 1 byte - Whether contract is upgradeable
     pub token_name: String,               // 4 + up to 32 bytes
@@ -1055,7 +1059,7 @@ impl TokenState {
         1 +                               // transfers_enabled
         1 +                               // transfers_permanently_enabled
         8 +                               // transfer_enable_timestamp
-        8 +                               // claim_period_seconds
+        8 +                               // claim_delay
         1 +                               // time_lock_enabled
         1 +                               // upgradeable
         4 + 32 +                          // token_name (String with max 32 chars)

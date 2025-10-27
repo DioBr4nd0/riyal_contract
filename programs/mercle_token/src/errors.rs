@@ -100,4 +100,8 @@ pub enum MercleError {
     TransfersPermanentlyEnabled,
     #[msg("Not permanent")]
     TransfersNotPermanentlyEnabled,
+    #[msg("Already initialized")]
+    AlreadyInitialized,
+    #[msg("Unauth deployer")]
+    UnauthorizedDeployer,
 }

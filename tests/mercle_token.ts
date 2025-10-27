@@ -1,6 +1,6 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
-import { RiyalContract } from "../target/types/riyal_contract";
+import { MercleToken } from "../target/types/mercle_token";
 import { 
   PublicKey, 
   Keypair, 
@@ -18,10 +18,10 @@ import {
 } from "@solana/spl-token";
 import { expect } from "chai";
 
-describe("Riyal Contract - Module 1: Initialize and Create Token Mint", () => {
+describe("Mercle Token - Module 1: Initialize and Create Token Mint", () => {
   // Configure the client to use the local cluster
   anchor.setProvider(anchor.AnchorProvider.env());
-  const program = anchor.workspace.riyalContract as Program<RiyalContract>;
+  const program = anchor.workspace.MercleToken as Program<MercleToken>;
   const provider = anchor.getProvider();
   const connection = provider.connection;
 
@@ -32,8 +32,8 @@ describe("Riyal Contract - Module 1: Initialize and Create Token Mint", () => {
   let bump: number;
 
   // Test data
-  const TOKEN_NAME = "Riyal Token";
-  const TOKEN_SYMBOL = "RIYAL";
+  const TOKEN_NAME = "Mercle Token";
+  const TOKEN_SYMBOL = "MERCLE";
   const TOKEN_DECIMALS = 9;
 
   before(async () => {
@@ -271,7 +271,7 @@ describe("Riyal Contract - Module 1: Initialize and Create Token Mint", () => {
   });
 });
 
-describe("Riyal Contract - Module 2: Admin Token Minting", () => {
+describe("Mercle Contract - Module 2: Admin Token Minting", () => {
   // Skip this test suite to avoid PDA conflicts
   // The functionality is tested in the integration test below
   it("Should skip individual Module 2 tests (tested in integration)", () => {
@@ -279,10 +279,10 @@ describe("Riyal Contract - Module 2: Admin Token Minting", () => {
   });
 });
 
-describe("Riyal Contract - Complete Integration Test", () => {
+describe("Mercle Contract - Complete Integration Test", () => {
   // Configure the client to use the local cluster
   anchor.setProvider(anchor.AnchorProvider.env());
-  const program = anchor.workspace.riyalContract as Program<RiyalContract>;
+  const program = anchor.workspace.MercleToken as Program<MercleToken>;
   const provider = anchor.getProvider();
   const connection = provider.connection;
 
@@ -298,8 +298,8 @@ describe("Riyal Contract - Complete Integration Test", () => {
   let user2TokenAccount: PublicKey;
 
   // Test data
-  const TOKEN_NAME = "Riyal Token";
-  const TOKEN_SYMBOL = "RIYAL";
+  const TOKEN_NAME = "Mercle Token";
+  const TOKEN_SYMBOL = "MERCLE";
   const TOKEN_DECIMALS = 9;
 
   before(async () => {

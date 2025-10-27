@@ -2,8 +2,8 @@
   "name": "Mercle Token",
   "symbol": "MERCLE",
   "description": "Official Mercle ecosystem token with signature-based claiming and freeze controls. A utility token designed for secure, controlled distribution with admin-signed claims and account freeze functionality.",
-  "image": "https://rose-electoral-cuckoo-545.mypinata.cloud/ipfs/bafybeibax2zm2uiilxveu5nwtmmpzrs2a2tqt56m7rdfz56fd5fvf2yy4u",
-  "external_url": "https://mercle.xyz",
+  "image": "https://ipfs.io/ipfs/bafkreibnylqsvmn4fssrbkcaz5lkqo3y4srfc7nxmskslj4xohqydxh6ju",
+  "external_url": "https://mercle.ai",
   "uri": "https://rose-electoral-cuckoo-545.mypinata.cloud/ipfs/bafkreicjiqv53ztui2jk3fstwu7vlxjy5uhut7h4gtvkiapll3bs5iy664",
   "attributes": [
     {
@@ -30,10 +30,11 @@
   "properties": {
     "files": [
       {
-        "uri": "https://rose-electoral-cuckoo-545.mypinata.cloud/ipfs/bafybeibax2zm2uiilxveu5nwtmmpzrs2a2tqt56m7rdfz56fd5fvf2yy4u",
+        "uri": "https://ipfs.io/ipfs/bafkreibnylqsvmn4fssrbkcaz5lkqo3y4srfc7nxmskslj4xohqydxh6ju",
         "type": "image/png"
       }
     ],
     "category": "image"
   }
 }
+

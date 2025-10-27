@@ -1,0 +1,17 @@
+{
+    "name": "MERCLE TOKEN",
+    "symbol": "MERCLE",
+    "description": "The official community and utility token for the MERCI project.",
+    "image": "https://ipfs.io/ipfs/bafkreibnylqsvmn4fssrbkcaz5lkqo3y4srfc7nxmskslj4xohqydxh6ju",
+    "seller_fee_basis_points": 0,
+    "properties": {
+      "files": [
+        {
+          "uri": "https://ipfs.io/ipfs/bafkreibnylqsvmn4fssrbkcaz5lkqo3y4srfc7nxmskslj4xohqydxh6ju",
+          "type": "image/jpeg"
+        }
+      ],
+      "category": "image",
+      "creators": []
+    }
+

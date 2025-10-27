@@ -6,17 +6,20 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-mercle_token = "2XWNXNwRdT9rfKUjsmtwi5St4yaLNDKoHiKiASyn3rLZ"
+mercle_token = "HWuotjdXtQePUmX5WCzPxQkZ3LiiXQ6i8AYSudgJxEts"
 
 [programs.devnet]
-mercle_token = "2XWNXNwRdT9rfKUjsmtwi5St4yaLNDKoHiKiASyn3rLZ"
+mercle_token = "HWuotjdXtQePUmX5WCzPxQkZ3LiiXQ6i8AYSudgJxEts"
+
+[programs.mainnet]
+mercle_token = "HWuotjdXtQePUmX5WCzPxQkZ3LiiXQ6i8AYSudgJxEts"
 
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "localnet"
-wallet = "~/.config/solana/id.json"
+cluster = "mainnet"
+wallet = "./mainnet_deployer.json"
 
 [scripts]
 test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
