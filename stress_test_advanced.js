@@ -30,8 +30,14 @@ const fs = require('fs');
 
 const RPC_URL = "https://api.devnet.solana.com";
 
-// Load admin
-const admin = Keypair.fromSecretKey(new Uint8Array(JSON.parse(fs.readFileSync("/Users/mercle/.config/solana/id.json", 'utf8'))));
+// Load admin (for funding transactions)
+const admin = Keypair.fromSecretKey(new Uint8Array(JSON.parse(fs.readFileSync(process.env.HOME + "/.config/solana/id.json", 'utf8'))));
+
+// Load claim signer (backend key that signs claims)
+const claimSigner = Keypair.fromSecretKey(new Uint8Array(JSON.parse(fs.readFileSync("./nu.json", 'utf8'))));
+
+console.log(`🔑 Admin: ${admin.publicKey.toString()}`);
+console.log(`🔑 Claim Signer: ${claimSigner.publicKey.toString()}`);
 
 // Helper functions
 function serializeClaimPayload(payload) {
@@ -131,16 +137,16 @@ async function executeClaim(program, tokenStatePDA, user, userData, userDataPDA,
   };
 
   const messageBytes = createDomainSeparatedMessage(program.programId, claimPayload);
-  const adminSignature = nacl.sign.detached(messageBytes, admin.secretKey);
+  const claimSignature = nacl.sign.detached(messageBytes, claimSigner.secretKey);
 
-  const adminEd25519Ix = Ed25519Program.createInstructionWithPublicKey({
-    publicKey: admin.publicKey.toBytes(),
+  const claimSignerEd25519Ix = Ed25519Program.createInstructionWithPublicKey({
+    publicKey: claimSigner.publicKey.toBytes(),
     message: messageBytes,
-    signature: adminSignature,
+    signature: claimSignature,
   });
 
   const claimIx = await program.methods
-    .claimTokens(claimPayload, Array.from(adminSignature))
+    .claimTokens(claimPayload, Array.from(claimSignature))
     .accounts({
       tokenState: tokenStatePDA,
       userData: userDataPDA,
@@ -152,7 +158,7 @@ async function executeClaim(program, tokenStatePDA, user, userData, userDataPDA,
     })
     .instruction();
 
-  const tx = new Transaction().add(adminEd25519Ix).add(claimIx);
+  const tx = new Transaction().add(claimSignerEd25519Ix).add(claimIx);
   tx.feePayer = user.publicKey;
   tx.recentBlockhash = (await program.provider.connection.getLatestBlockhash()).blockhash;
   tx.sign(user);

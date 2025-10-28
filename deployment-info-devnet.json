@@ -1,9 +1,0 @@
-{
-  "network": "devnet",
-  "programId": "8hTmthTK1RHVf7EQ1Y6EVkcL1PCzfZ4PxZ1PCpjS7wrU",
-  "tokenMint": "9J7J63Nqc9byRgxKwnF1DdVeBx49TduQwAdcebc3HLxL",
-  "treasury": "DkDbF4Ea9DKMtR5cNh6aFYjjrL1pXSkerQ5Rinqquj7k",
-  "tokenState": "2R7puKSimF7BdCeWC7Axpn297xuYDthWQ9asaSyc7wS5",
-  "admin": "E3SNDSxHdXqjZ3GwDh3BLV4TfncX2n6qqdXPrQM1HeeP",
-  "deployedAt": "2025-10-27T07:14:17.785Z"
-}

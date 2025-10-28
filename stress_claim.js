@@ -36,8 +36,11 @@ const fs = require('fs');
 // Number of accounts to generate and test concurrently
 const NUMBER_OF_ACCOUNTS = 3; // CHANGE THIS NUMBER FOR STRESS TEST SIZE
 
-// Admin's private key (can be file path or array)
-const ADMIN_KEY_SOURCE = "/Users/mercle/.config/solana/id.json"; // or use array: [1,2,3,...]
+// Admin's private key (for funding and transactions)
+const ADMIN_KEY_SOURCE = process.env.HOME + "/.config/solana/id.json";
+
+// Claim signer's private key (backend key that signs claims)
+const CLAIM_SIGNER_PATH = "./nu.json";
 
 // Claim parameters (applied to all accounts)
 const CLAIM_AMOUNT_TOKENS = 1000; // Amount in tokens per account
@@ -71,6 +74,32 @@ function loadAdminKeypair() {
     return Keypair.fromSecretKey(new Uint8Array(ADMIN_KEY_SOURCE));
   } else {
     throw new Error("ADMIN_KEY_SOURCE must be a file path string or private key array");
+  }
+}
+
+// Load claim signer keypair (supports both JSON array and base58 formats)
+function loadClaimSignerKeypair() {
+  try {
+    const fileContent = fs.readFileSync(CLAIM_SIGNER_PATH, 'utf8').trim();
+    
+    // Try parsing as JSON array first (standard Solana keypair format)
+    try {
+      const keypairData = JSON.parse(fileContent);
+      if (Array.isArray(keypairData)) {
+        return Keypair.fromSecretKey(new Uint8Array(keypairData));
+      }
+    } catch (e) {
+      // Not JSON, try as base58
+    }
+    
+    // Try as base58 string
+    const bs58Module = require('bs58');
+    const bs58 = bs58Module.default || bs58Module;
+    const privateKeyBytes = bs58.decode(fileContent);
+    return Keypair.fromSecretKey(privateKeyBytes);
+  } catch (error) {
+    console.error(`Failed to load claim signer keypair from ${CLAIM_SIGNER_PATH}`);
+    throw error;
   }
 }
 
@@ -308,9 +337,11 @@ async function processClaimsInBatches(claimPromises, batchSize, delayMs) {
   const overallStartTime = Date.now();
   
   try {
-    // Load admin
+    // Load keypairs
     const admin = loadAdminKeypair();
+    const claimSigner = loadClaimSignerKeypair();
     console.log(`🔑 Admin: ${admin.publicKey.toString()}`);
+    console.log(`🔑 Claim Signer: ${claimSigner.publicKey.toString()}`);
     console.log("");
     
     // Connect to Solana
@@ -372,20 +403,20 @@ async function processClaimsInBatches(claimPromises, batchSize, delayMs) {
           nonce: new anchor.BN(0) // Assuming first claim for all
         };
         
-        // Create signature
+        // Create signature (using claim signer)
         const messageBytes = createDomainSeparatedMessage(programId, claimPayload);
-        const adminSignature = nacl.sign.detached(messageBytes, admin.secretKey);
+        const claimSignature = nacl.sign.detached(messageBytes, claimSigner.secretKey);
         
         // Create Ed25519 verification instruction
-        const adminEd25519Ix = Ed25519Program.createInstructionWithPublicKey({
-          publicKey: admin.publicKey.toBytes(),
+        const claimSignerEd25519Ix = Ed25519Program.createInstructionWithPublicKey({
+          publicKey: claimSigner.publicKey.toBytes(),
           message: messageBytes,
-          signature: adminSignature,
+          signature: claimSignature,
         });
         
         // Create claim instruction
         const claimIx = await program.methods
-          .claimTokens(claimPayload, Array.from(adminSignature))
+          .claimTokens(claimPayload, Array.from(claimSignature))
           .accounts({
             tokenState: tokenStatePDA,
             userData: accountData.userDataPDA,
@@ -399,7 +430,7 @@ async function processClaimsInBatches(claimPromises, batchSize, delayMs) {
         
         // Build and send transaction
         const claimTransaction = new Transaction()
-          .add(adminEd25519Ix)
+          .add(claimSignerEd25519Ix)
           .add(claimIx);
         
         claimTransaction.feePayer = accountData.account.keypair.publicKey;

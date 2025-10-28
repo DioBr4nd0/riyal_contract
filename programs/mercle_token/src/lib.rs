@@ -15,7 +15,7 @@ use errors::MercleError;
 pub mod signature;
 use signature::verify_admin_signature_only;
 
-declare_id!("HWuotjdXtQePUmX5WCzPxQkZ3LiiXQ6i8AYSudgJxEts");
+declare_id!("3SkrCb3S7ocBxLZFrSYpNqTcNvdkvFpocXtpf3dZZyCo");
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
 pub struct ClaimPayload {
@@ -29,12 +29,13 @@ pub struct ClaimPayload {
 pub mod mercle_token {
     use super::*;
 
-    pub fn initialize(ctx: Context<Initialize>, admin: Pubkey, upgrade_authority: Pubkey, claim_delay: i64, time_lock_enabled: bool, upgradeable: bool) -> Result<()> {
+    pub fn initialize(ctx: Context<Initialize>, admin: Pubkey, upgrade_authority: Pubkey, claim_signer: Pubkey, claim_delay: i64, time_lock_enabled: bool, upgradeable: bool) -> Result<()> {
         require!(claim_delay >= 30 && claim_delay <= 31536000, MercleError::InvalidClaimPeriod);
 
         let token_state = &mut ctx.accounts.token_state;
         token_state.admin = admin;
         token_state.upgrade_authority = upgrade_authority;
+        token_state.claim_signer = claim_signer;
         token_state.is_initialized = true;
         token_state.token_mint = Pubkey::default();
         token_state.treasury_account = Pubkey::default();
@@ -186,7 +187,8 @@ pub mod mercle_token {
         let admin_sig_sum: u64 = admin_signature.iter().map(|&x| x as u64).sum();
         require!(admin_sig_sum > 0, MercleError::InvalidAdminSignature);
 
-        verify_admin_signature_only(&ctx.accounts.instructions, &message_bytes, &admin_signature, &token_state.admin)?;
+        // Verify signature against claim_signer (not admin) for security separation
+        verify_admin_signature_only(&ctx.accounts.instructions, &message_bytes, &admin_signature, &token_state.claim_signer)?;
 
         let seeds = &[b"token_state".as_ref(), &[ctx.bumps.token_state]];
         
@@ -308,6 +310,14 @@ pub mod mercle_token {
         let token_state = &mut ctx.accounts.token_state;
         token_state.claim_delay = claim_delay;
         token_state.time_lock_enabled = time_lock_enabled;
+
+        Ok(())
+    }
+
+    /// ACCESS: ADMIN ONLY (updates the claim signer for security rotation)
+    pub fn update_claim_signer(ctx: Context<UpdateClaimSigner>, new_claim_signer: Pubkey) -> Result<()> {
+        let token_state = &mut ctx.accounts.token_state;
+        token_state.claim_signer = new_claim_signer;
 
         Ok(())
     }
@@ -474,6 +484,21 @@ pub struct Initialize<'info> {
 
 #[derive(Accounts)]
 pub struct UpdateTimeLock<'info> {
+    #[account(
+        mut,
+        seeds = [b"token_state"],
+        bump
+    )]
+    pub token_state: Account<'info, TokenState>,
+    
+    #[account(
+        constraint = admin.key() == token_state.admin @ MercleError::UnauthorizedAdmin
+    )]
+    pub admin: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct UpdateClaimSigner<'info> {
     #[account(
         mut,
         seeds = [b"token_state"],
@@ -1036,6 +1061,7 @@ pub struct TokenState {
     pub token_mint: Pubkey,               // 32 bytes  
     pub treasury_account: Pubkey,         // 32 bytes - Contract treasury token account
     pub upgrade_authority: Pubkey,        // 32 bytes - Program upgrade authority
+    pub claim_signer: Pubkey,             // 32 bytes - Separate key for signing claims (backend key)
     pub is_initialized: bool,             // 1 byte
     pub transfers_enabled: bool,          // 1 byte
     pub transfers_permanently_enabled: bool, // 1 byte - Once true, cannot be changed
@@ -1055,6 +1081,7 @@ impl TokenState {
         32 +                              // token_mint
         32 +                              // treasury_account
         32 +                              // upgrade_authority
+        32 +                              // claim_signer
         1 +                               // is_initialized
         1 +                               // transfers_enabled
         1 +                               // transfers_permanently_enabled

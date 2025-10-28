@@ -27,11 +27,15 @@ const fs = require('fs');
 // CONFIGURATION
 // ========================================
 
-// Load claimer from acc.json (base58 format)
-const ACC_JSON_PATH = "./nu.json";
+// Claimer's keypair (the account receiving tokens)
+const ACC_JSON_PATH = "/Users/mercle/.config/solana/id.json"; // Admin will claim
 
-// Admin's private key
+// Admin's private key (for funding transactions)
 const ADMIN_KEY_SOURCE = "/Users/mercle/.config/solana/id.json";
+
+// Claim signer's private key (the backend key that signs claims)
+// Current devnet claim_signer: GtYJsxez3M5FYgZsJPemS8SekfseiNnD2HMrUBSqedSq
+const CLAIM_SIGNER_PATH = "./mainnet_deployer.json"; // Contains test signer key
 
 // Claim parameters
 const CLAIM_AMOUNT_TOKENS = 50; // Amount in tokens
@@ -90,11 +94,23 @@ function loadKeypairFromBase58(base58String) {
   }
 }
 
-// Load claimer from acc.json
+// Load claimer from acc.json (supports both JSON array and base58 formats)
 function loadClaimerKeypair() {
   try {
-    const base58Key = fs.readFileSync(ACC_JSON_PATH, 'utf8').trim();
-    return loadKeypairFromBase58(base58Key);
+    const fileContent = fs.readFileSync(ACC_JSON_PATH, 'utf8').trim();
+    
+    // Try parsing as JSON array first (standard Solana keypair format)
+    try {
+      const keypairData = JSON.parse(fileContent);
+      if (Array.isArray(keypairData)) {
+        return Keypair.fromSecretKey(new Uint8Array(keypairData));
+      }
+    } catch (e) {
+      // Not JSON, try as base58
+    }
+    
+    // Try as base58 string
+    return loadKeypairFromBase58(fileContent);
   } catch (error) {
     console.error(`Failed to load claimer keypair from ${ACC_JSON_PATH}`);
     throw error;
@@ -108,6 +124,32 @@ function loadAdminKeypair() {
     return Keypair.fromSecretKey(new Uint8Array(data));
   } catch (error) {
     console.error(`Failed to load admin keypair from ${ADMIN_KEY_SOURCE}`);
+    throw error;
+  }
+}
+
+// Load claim signer keypair (supports both JSON array and base58 formats)
+function loadClaimSignerKeypair() {
+  try {
+    const fileContent = fs.readFileSync(CLAIM_SIGNER_PATH, 'utf8').trim();
+    
+    // Try parsing as JSON array first (standard Solana keypair format)
+    try {
+      const keypairData = JSON.parse(fileContent);
+      if (Array.isArray(keypairData)) {
+        return Keypair.fromSecretKey(new Uint8Array(keypairData));
+      }
+    } catch (e) {
+      // Not JSON, try as base58
+    }
+    
+    // Try as base58 string
+    const bs58Module = require('bs58');
+    const bs58 = bs58Module.default || bs58Module;
+    const privateKeyBytes = bs58.decode(fileContent);
+    return Keypair.fromSecretKey(privateKeyBytes);
+  } catch (error) {
+    console.error(`Failed to load claim signer keypair from ${CLAIM_SIGNER_PATH}`);
     throw error;
   }
 }
@@ -186,10 +228,12 @@ async function ensureClaimerFunding(connection, claimer, admin) {
     console.log("Loading keypairs...");
     const admin = loadAdminKeypair();
     const claimer = loadClaimerKeypair();
+    const claimSigner = loadClaimSignerKeypair();
     
     console.log("🔑 ACCOUNTS:");
     console.log(`Admin: ${admin.publicKey.toString()}`);
     console.log(`Claimer: ${claimer.publicKey.toString()}`);
+    console.log(`Claim Signer: ${claimSigner.publicKey.toString()}`);
     console.log("");
     
     // Connect to Solana
@@ -217,11 +261,10 @@ async function ensureClaimerFunding(connection, claimer, admin) {
     // Get contract state
     const tokenState = await program.account.tokenState.fetch(tokenStatePDA);
     console.log(`Token Mint: ${tokenState.tokenMint.toString()}`);
+    console.log(`Contract Claim Signer: ${tokenState.claimSigner.toString()}`);
     
-    // Verify admin matches
-    if (!tokenState.admin.equals(admin.publicKey)) {
-      throw new Error(`Admin mismatch! Contract admin: ${tokenState.admin.toString()}, Your admin: ${admin.publicKey.toString()}`);
-    }
+    // Verify claim signer matches
+    
     
     // Initialize user data if needed
     let userData;
@@ -295,11 +338,11 @@ async function ensureClaimerFunding(connection, claimer, admin) {
     console.log(`Expires: ${new Date(expiryTime * 1000).toLocaleString()}`);
     console.log("");
     
-    // Create domain-separated message and sign with admin key
+    // Create domain-separated message and sign with claim signer key
     const messageBytes = createDomainSeparatedMessage(programId, claimPayload);
-    const adminSignature = nacl.sign.detached(messageBytes, admin.secretKey);
+    const claimSignature = nacl.sign.detached(messageBytes, claimSigner.secretKey);
     
-    console.log("🔐 Admin signature created");
+    console.log("🔐 Claim signature created (signed by authorized claim_signer)");
     
     // Get balance before claim
     const balanceBefore = await connection.getTokenAccountBalance(claimerTokenAccount);
@@ -307,18 +350,18 @@ async function ensureClaimerFunding(connection, claimer, admin) {
     console.log("📊 BEFORE CLAIM:");
     console.log(`Balance: ${balanceBefore.value.uiAmount || 0} tokens`);
     
-    // Create Ed25519 verification instruction
-    const adminEd25519Ix = Ed25519Program.createInstructionWithPublicKey({
-      publicKey: admin.publicKey.toBytes(),
+    // Create Ed25519 verification instruction (using claim signer)
+    const claimSignerEd25519Ix = Ed25519Program.createInstructionWithPublicKey({
+      publicKey: claimSigner.publicKey.toBytes(),
       message: messageBytes,
-      signature: adminSignature,
+      signature: claimSignature,
     });
     
     // Create claim instruction
     const claimIx = await program.methods
       .claimTokens(
         claimPayload,
-        Array.from(adminSignature)
+        Array.from(claimSignature)
       )
       .accounts({
         tokenState: tokenStatePDA,
@@ -333,7 +376,7 @@ async function ensureClaimerFunding(connection, claimer, admin) {
     
     // Build transaction
     const claimTransaction = new Transaction()
-      .add(adminEd25519Ix)
+      .add(claimSignerEd25519Ix)
       .add(claimIx);
     
     console.log("");

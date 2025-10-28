@@ -7,7 +7,7 @@ const fs = require("fs");
 // ========================================
 // CONFIGURATION - EDIT THESE VALUES
 // ========================================
-const CLUSTER = "mainnet-beta"; // MAINNET DEPLOYMENT
+const CLUSTER = "devnet"; // DEVNET TESTING - DO NOT CHANGE TO MAINNET WITHOUT APPROVAL!
 
 const TOKEN_CONFIG = {
   name: "MERCI POINTS",
@@ -40,9 +40,7 @@ const METAPLEX_PROGRAM_ID = new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt
   const connection = new anchor.web3.Connection(RPC_URLS[CLUSTER], "confirmed");
 
   // Load wallet
-  const walletPath = CLUSTER === "mainnet-beta" 
-    ? "./mainnet_deployer.json" 
-    : process.env.HOME + "/.config/solana/id.json";
+  const walletPath = process.env.HOME + "/.config/solana/id.json";
   const wallet = Keypair.fromSecretKey(new Uint8Array(JSON.parse(fs.readFileSync(walletPath))));
 
   console.log(`💼 Wallet: ${wallet.publicKey.toString()}`);
@@ -96,12 +94,15 @@ const METAPLEX_PROGRAM_ID = new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt
     const tokenState = await program.account.tokenState.fetch(tokenStatePDA);
     console.log("✅ Contract already initialized!");
     console.log(`   Admin: ${tokenState.admin.toString()}`);
+    console.log(`   Claim Signer: ${tokenState.claimSigner.toString()}`);
   } catch (e) {
     // Not initialized, do it now
+    // Note: Using admin key as claim_signer by default - generate separate key for production!
     const tx = await program.methods
       .initialize(
-        wallet.publicKey,
-        wallet.publicKey,
+        wallet.publicKey,           // admin
+        wallet.publicKey,           // upgrade_authority (same as admin)
+        wallet.publicKey,           // claim_signer (TODO: use separate key!)
         new anchor.BN(TOKEN_CONFIG.claimDelay),
         TOKEN_CONFIG.timeLockEnabled,
         true
@@ -114,6 +115,7 @@ const METAPLEX_PROGRAM_ID = new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt
       .rpc();
 
     console.log(`✅ Initialized! Tx: ${tx}`);
+    console.log("⚠️  WARNING: Using admin key as claim signer. Generate separate key for production!");
     await new Promise(resolve => setTimeout(resolve, 2000));
   }
 
